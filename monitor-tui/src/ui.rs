@@ -1,5 +1,5 @@
+use crate::ansi::ansi_to_text;
 use crate::app::{App, Mode, Tab};
-use crate::LOGO_CORNER;
 use monitor_core::alert::Severity;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Position, Rect},
@@ -68,11 +68,14 @@ pub fn draw(frame: &mut Frame, app: &App) {
 // Logo
 // ---------------------------------------------------------------------------
 
+/// 20-col ANSI art embedded at compile time and parsed into ratatui Text.
+fn logo_text() -> ratatui::text::Text<'static> {
+    static ART: &str = include_str!("../../docs/logos/monty-ansi-20.txt");
+    ansi_to_text(ART)
+}
+
 fn draw_logo(frame: &mut Frame, area: Rect) {
-    frame.render_widget(
-        Paragraph::new(LOGO_CORNER).style(Style::default().fg(Color::Green)),
-        area,
-    );
+    frame.render_widget(Paragraph::new(logo_text()), area);
 }
 
 // ---------------------------------------------------------------------------
@@ -215,11 +218,7 @@ fn draw_alerts_tab(frame: &mut Frame, app: &App, area: Rect) {
             ],
         )
         .header(header)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Active Alerts"),
-        )
+        .block(Block::default().borders(Borders::ALL))
         .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED)),
         area,
     );
