@@ -633,6 +633,7 @@ mod tests {
     fn draw_with_active_alerts() {
         let mut term = test_terminal(120, 40);
         let mut app = App::new();
+        app.active_tab = Tab::Alerts; // exercise the Alerts tab content
         app.update(Event::AlertFired(firing_alert(
             Severity::Critical,
             "gnuc",
