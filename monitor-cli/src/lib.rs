@@ -54,12 +54,12 @@ async fn run_tui(cfg: monitor_core::Config) -> anyhow::Result<()> {
     use monitor_tui::Event;
     use tokio::sync::mpsc;
 
+    let splash_timeout = cfg.tui.splash_timeout_secs;
     let (tx, rx) = mpsc::channel::<Event>(256);
 
-    // Start collectors in background and feed the TUI's event channel.
     daemon::spawn_collectors(cfg, tx).await?;
 
-    monitor_tui::run(rx).await
+    monitor_tui::run(rx, splash_timeout).await
 }
 
 async fn print_status(cfg: monitor_core::Config) -> anyhow::Result<()> {

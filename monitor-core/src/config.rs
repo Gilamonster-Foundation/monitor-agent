@@ -23,6 +23,28 @@ pub struct Config {
     pub rules: Vec<RuleConfig>,
     #[serde(default)]
     pub notify: NotifyConfig,
+    #[serde(default)]
+    pub tui: TuiConfig,
+}
+
+/// TUI-specific settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TuiConfig {
+    /// Seconds before the splash screen auto-dismisses. Set to 0 to wait forever.
+    #[serde(default = "default_splash_timeout")]
+    pub splash_timeout_secs: u64,
+}
+
+fn default_splash_timeout() -> u64 {
+    10
+}
+
+impl Default for TuiConfig {
+    fn default() -> Self {
+        Self {
+            splash_timeout_secs: default_splash_timeout(),
+        }
+    }
 }
 
 impl Config {

@@ -57,12 +57,11 @@ pub fn splash_for_width(cols: u16) -> &'static str {
 
 /// Full-screen ANSI splash — same pattern as newt-agent.
 ///
-/// Enters the alternate screen, prints the colour logo flush to the top-left,
-/// then prints branding text to the right. Blocks until the user presses any
-/// key; q / Esc / Ctrl-C are treated identically to Enter (just dismiss).
-/// Returns `false` only if we should quit immediately (currently unused —
-/// caller always proceeds to the TUI).
-fn show_ansi_splash() -> anyhow::Result<bool> {
+/// `timeout_secs`: auto-dismiss after this many seconds (0 = wait forever).
+/// Returns `false` only if the user pressed q / Esc / Ctrl-C (quit).
+fn show_ansi_splash(timeout_secs: u64) -> anyhow::Result<bool> {
+    use std::time::{Duration, Instant};
+
     let (cols, _rows) = ct_terminal::size().unwrap_or((80, 24));
     let (art, art_cols) = splash_art_for_size(cols);
     let art_rows = art.lines().count() as u16;
@@ -81,9 +80,9 @@ fn show_ansi_splash() -> anyhow::Result<bool> {
     write!(out, "{}", art.replace('\n', "\r\n"))?;
     out.flush()?;
 
-    // Print branding to the right of the art if there's room.
     let brand_col = art_cols + 3;
-    if brand_col + 28 < cols {
+    let has_brand_room = brand_col + 28 < cols;
+    let mid = if has_brand_room {
         let mid = art_rows.saturating_sub(4) / 2;
 
         queue!(out, MoveTo(brand_col, mid))?;
@@ -110,21 +109,67 @@ fn show_ansi_splash() -> anyhow::Result<bool> {
             ResetColor
         )?;
 
+        out.flush()?;
+        mid
+    } else {
+        0
+    };
+
+    // Helper: write the dismiss hint line (overwrites in place each second).
+    let write_hint = |out: &mut io::Stdout, remaining: Option<u64>| -> anyhow::Result<()> {
+        if !has_brand_room {
+            return Ok(());
+        }
+        let hint = match remaining {
+            Some(0) | None => "↵ start  ·  q quit".to_owned(),
+            Some(s) => format!("↵ start  ·  q quit  ·  {s}s"),
+        };
+        // Pad to a fixed width so old digits get overwritten cleanly.
+        let padded = format!("{hint:<35}");
         queue!(out, MoveTo(brand_col, mid + 4))?;
         queue!(
             out,
             SetForegroundColor(CtColor::DarkGrey),
-            Print("↵ start  ·  q quit"),
+            Print(padded),
             ResetColor
         )?;
-
         out.flush()?;
-    }
+        Ok(())
+    };
 
-    // Block until any keypress.
+    let deadline = if timeout_secs > 0 {
+        Some(Instant::now() + Duration::from_secs(timeout_secs))
+    } else {
+        None
+    };
+
+    // Write the initial hint.
+    write_hint(
+        &mut out,
+        deadline.map(|d| d.saturating_duration_since(Instant::now()).as_secs()),
+    )?;
+
     let mut quit = false;
+    let mut last_secs_remaining = timeout_secs;
+
     loop {
-        if ct_event::poll(std::time::Duration::from_millis(100))? {
+        // How long until the next event poll should return at the latest.
+        let poll_dur = Duration::from_millis(100);
+
+        // Check timeout.
+        if let Some(dl) = deadline {
+            if Instant::now() >= dl {
+                break; // auto-dismiss
+            }
+            // Update countdown once per second.
+            let secs_left = dl.saturating_duration_since(Instant::now()).as_secs();
+            if secs_left != last_secs_remaining {
+                last_secs_remaining = secs_left;
+                write_hint(&mut out, Some(secs_left))?;
+            }
+        }
+
+        if ct_event::poll(poll_dur)? {
             match ct_event::read()? {
                 CtEvent::Key(KeyEvent {
                     code: KeyCode::Char('q'),
@@ -157,12 +202,13 @@ fn show_ansi_splash() -> anyhow::Result<bool> {
 
 /// Run the TUI in-process (standalone mode — no daemon required).
 ///
+/// `splash_timeout_secs`: passed to the splash screen (0 = wait forever).
 /// Accepts an `mpsc::Receiver<Event>` fed by the daemon's data pipeline.
-pub async fn run(mut data_rx: mpsc::Receiver<Event>) -> anyhow::Result<()> {
-    // Show the full-screen ANSI splash before entering the ratatui loop.
-    // block_in_place lets us run the sync crossterm I/O without blocking
-    // the tokio runtime thread.
-    let cont = tokio::task::block_in_place(show_ansi_splash)?;
+pub async fn run(
+    mut data_rx: mpsc::Receiver<Event>,
+    splash_timeout_secs: u64,
+) -> anyhow::Result<()> {
+    let cont = tokio::task::block_in_place(move || show_ansi_splash(splash_timeout_secs))?;
     if !cont {
         return Ok(());
     }

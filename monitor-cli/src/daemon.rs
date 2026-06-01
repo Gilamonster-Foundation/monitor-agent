@@ -203,6 +203,7 @@ mod tests {
             nats: None,
             rules: vec![],
             notify: NotifyConfig::default(),
+            tui: monitor_core::config::TuiConfig::default(),
         }
     }
 
