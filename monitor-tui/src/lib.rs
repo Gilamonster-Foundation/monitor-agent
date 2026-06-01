@@ -2,7 +2,7 @@ mod app;
 mod event;
 mod ui;
 
-pub use app::{App, Tab};
+pub use app::{App, ChatMessage, Mode, Tab};
 pub use event::Event;
 
 use anyhow::Context;
@@ -14,6 +14,9 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
 use tokio::sync::mpsc;
+
+/// Plain ASCII logo for the upper-left corner panel (20 cols × 7 lines).
+pub(crate) const LOGO_CORNER: &str = include_str!("../../docs/logos/monty-ascii-20.txt");
 
 /// Embedded splash logos, selected by terminal width at runtime.
 const SPLASH_10: &str = include_str!("../../docs/logos/monty-ansi-10.txt");
