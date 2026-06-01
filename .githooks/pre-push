@@ -17,6 +17,10 @@
 
 set -e
 
+# Ensure ~/.cargo/bin is on PATH so cargo-installed tools are found
+# even when the hook is invoked from a GUI git client or minimal shell.
+export PATH="$HOME/.cargo/bin:$PATH"
+
 cd "$(git rev-parse --show-toplevel)"
 
 if ! command -v just >/dev/null 2>&1; then
