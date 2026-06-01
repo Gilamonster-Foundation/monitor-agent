@@ -15,7 +15,8 @@ use ratatui::{
 // ---------------------------------------------------------------------------
 
 /// Lines reserved for the header (portrait + speech panel).
-const HEADER_H: u16 = 20;
+/// Must match the line count of docs/logos/monty-ansi-portrait-32.txt.
+const HEADER_H: u16 = 13;
 /// Width of the portrait column.
 const PORTRAIT_W: u16 = 33;
 /// Minimum terminal width before the portrait is hidden.

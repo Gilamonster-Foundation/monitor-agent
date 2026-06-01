@@ -68,7 +68,7 @@ pub struct App {
 impl App {
     pub fn new() -> Self {
         Self {
-            active_tab: Tab::Alerts,
+            active_tab: Tab::Metrics,
             quit: false,
             metrics: HashMap::new(),
             active_alerts: Vec::new(),
