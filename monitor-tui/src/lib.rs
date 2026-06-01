@@ -21,6 +21,9 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io::{self, Write};
 use tokio::sync::mpsc;
 
+/// 32-col × 16-line square-cropped portrait for the dashboard header panel.
+pub(crate) const PORTRAIT: &str = include_str!("../../docs/logos/monty-ansi-portrait-32.txt");
+
 /// Embedded ANSI splash art — selected by terminal width at runtime.
 const SPLASH_10: &str = include_str!("../../docs/logos/monty-ansi-10.txt");
 const SPLASH_20: &str = include_str!("../../docs/logos/monty-ansi-20.txt");

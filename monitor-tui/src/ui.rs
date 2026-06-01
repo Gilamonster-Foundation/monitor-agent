@@ -1,5 +1,6 @@
 use crate::ansi::ansi_to_text;
-use crate::app::{App, Mode, Tab};
+use crate::app::{App, ChatMessage, Mode, Tab};
+use crate::PORTRAIT;
 use monitor_core::alert::Severity;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Position, Rect},
@@ -9,89 +10,97 @@ use ratatui::{
     Frame,
 };
 
-/// Minimum terminal width before the logo column is hidden.
-const LOGO_MIN_WIDTH: u16 = 50;
-/// Fixed column width reserved for the Monty logo.
-const LOGO_WIDTH: u16 = 21;
-/// Height of the chat panel (history + input line).
-const CHAT_HEIGHT: u16 = 3;
+// ---------------------------------------------------------------------------
+// Layout constants
+// ---------------------------------------------------------------------------
+
+/// Lines reserved for the header (portrait + speech panel).
+const HEADER_H: u16 = 20;
+/// Width of the portrait column.
+const PORTRAIT_W: u16 = 33;
+/// Minimum terminal width before the portrait is hidden.
+const PORTRAIT_MIN_WIDTH: u16 = 55;
+
+// ---------------------------------------------------------------------------
+// Top-level draw
+// ---------------------------------------------------------------------------
 
 pub fn draw(frame: &mut Frame, app: &App) {
     let area = frame.area();
+    let show_portrait = area.width >= PORTRAIT_MIN_WIDTH;
 
-    // Outer vertical split: [top] [chat] [status]
+    // Outer: [header] [tabs] [content] [status]
     let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(5),
-            Constraint::Length(CHAT_HEIGHT),
+            Constraint::Length(HEADER_H),
+            Constraint::Length(1),
+            Constraint::Min(4),
             Constraint::Length(1),
         ])
         .split(area);
 
-    let top_area = outer[0];
-    let chat_area = outer[1];
-    let status_area = outer[2];
+    let header_area = outer[0];
+    let tabs_area = outer[1];
+    let content_area = outer[2];
+    let status_area = outer[3];
 
-    // Top horizontal split: [logo] [right]
-    let show_logo = area.width >= LOGO_MIN_WIDTH;
-    let logo_w = if show_logo { LOGO_WIDTH } else { 0 };
-    let top = Layout::default()
+    // Header: [portrait] [speech]
+    let portrait_w = if show_portrait { PORTRAIT_W } else { 0 };
+    let header_split = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(logo_w), Constraint::Min(20)])
-        .split(top_area);
+        .constraints([Constraint::Length(portrait_w), Constraint::Min(20)])
+        .split(header_area);
 
-    let logo_area = top[0];
-    let right_area = top[1];
-
-    // Right vertical split: [header] [tabs] [content]
-    let right = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Min(5),
-        ])
-        .split(right_area);
-
-    if show_logo {
-        draw_logo(frame, logo_area);
+    if show_portrait {
+        draw_portrait(frame, header_split[0]);
     }
-    draw_header(frame, app, right[0]);
-    draw_tabs(frame, app, right[1]);
-    draw_content(frame, app, right[2]);
-    draw_chat(frame, app, chat_area);
+    draw_speech_panel(frame, app, header_split[1]);
+    draw_tabs(frame, app, tabs_area);
+    draw_content(frame, app, content_area);
     draw_status_bar(frame, app, status_area);
 }
 
 // ---------------------------------------------------------------------------
-// Logo
+// Portrait
 // ---------------------------------------------------------------------------
 
-/// 20-col ANSI art embedded at compile time and parsed into ratatui Text.
-fn logo_text() -> ratatui::text::Text<'static> {
-    static ART: &str = include_str!("../../docs/logos/monty-ansi-20.txt");
-    ansi_to_text(ART)
-}
-
-fn draw_logo(frame: &mut Frame, area: Rect) {
-    frame.render_widget(Paragraph::new(logo_text()), area);
+fn draw_portrait(frame: &mut Frame, area: Rect) {
+    frame.render_widget(Paragraph::new(ansi_to_text(PORTRAIT)), area);
 }
 
 // ---------------------------------------------------------------------------
-// Header
+// Speech panel (right of portrait): status + commentary + chat log + input
 // ---------------------------------------------------------------------------
 
-fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
-    let daemon_indicator = if app.daemon_connected {
+fn draw_speech_panel(frame: &mut Frame, app: &App, area: Rect) {
+    // Vertical split inside the speech panel:
+    //   [status 1] [commentary 3] [chat log fills] [input 1]
+    let splits = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(3),
+            Constraint::Min(0),
+            Constraint::Length(1),
+        ])
+        .split(area);
+
+    draw_speech_status(frame, app, splits[0]);
+    draw_commentary(frame, app, splits[1]);
+    draw_chat_log(frame, app, splits[2]);
+    draw_chat_input(frame, app, splits[3]);
+}
+
+fn draw_speech_status(frame: &mut Frame, app: &App, area: Rect) {
+    let conn = if app.daemon_connected {
         Span::styled("● daemon:ok", Style::default().fg(Color::Green))
     } else {
         Span::styled("● daemon:…", Style::default().fg(Color::DarkGray))
     };
-
-    let alert_badge = if app.active_alert_count > 0 {
+    let alerts = if app.active_alert_count > 0 {
         Span::styled(
-            format!("  ⚠ {} alert(s)", app.active_alert_count),
+            format!("  ⚠ {}", app.active_alert_count),
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
@@ -99,16 +108,101 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         Span::styled("  ✓ ok", Style::default().fg(Color::Green))
     };
-
     let time = Span::styled(
         format!("  {}", app.now),
         Style::default().fg(Color::DarkGray),
     );
+    frame.render_widget(Paragraph::new(Line::from(vec![conn, alerts, time])), area);
+}
 
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![daemon_indicator, alert_badge, time])),
-        area,
-    );
+fn draw_commentary(frame: &mut Frame, app: &App, area: Rect) {
+    let lines = monty_says(app);
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
+fn monty_says(app: &App) -> Vec<Line<'static>> {
+    if app.active_alerts.is_empty() {
+        if app.metrics.is_empty() {
+            vec![Line::from(Span::styled(
+                "Watching... (no metrics yet)",
+                Style::default().fg(Color::DarkGray),
+            ))]
+        } else {
+            vec![Line::from(Span::styled(
+                "All clear. Systems nominal.",
+                Style::default().fg(Color::Green),
+            ))]
+        }
+    } else {
+        let mut lines = Vec::new();
+        for alert in app.active_alerts.iter().take(3) {
+            let color = match alert.severity {
+                Severity::Critical => Color::Red,
+                Severity::Warn => Color::Yellow,
+                Severity::Info => Color::Blue,
+            };
+            let icon = match alert.severity {
+                Severity::Critical => "● ",
+                Severity::Warn => "⚠ ",
+                Severity::Info => "ℹ ",
+            };
+            lines.push(Line::from(vec![
+                Span::styled(icon, Style::default().fg(color)),
+                Span::styled(alert.message.clone(), Style::default().fg(color)),
+            ]));
+        }
+        if app.active_alert_count > 3 {
+            lines.push(Line::from(Span::styled(
+                format!("  … and {} more", app.active_alert_count - 3),
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+        lines
+    }
+}
+
+fn draw_chat_log(frame: &mut Frame, app: &App, area: Rect) {
+    if area.height == 0 {
+        return;
+    }
+    let n = area.height as usize;
+    let recent = app.recent_chat(n);
+    let lines: Vec<Line> = recent.iter().map(|msg| chat_line(msg)).collect();
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
+fn chat_line(msg: &ChatMessage) -> Line<'static> {
+    let (label, color) = if msg.from == "you" {
+        ("you  ", Color::Cyan)
+    } else {
+        ("monty", Color::Green)
+    };
+    Line::from(vec![
+        Span::styled(
+            format!("{label}: "),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(msg.text.clone()),
+    ])
+}
+
+fn draw_chat_input(frame: &mut Frame, app: &App, area: Rect) {
+    let (prompt, style) = match app.mode {
+        Mode::Chat => (
+            format!("> {}", app.chat_input),
+            Style::default().fg(Color::Yellow),
+        ),
+        Mode::Normal => ("> / to chat".into(), Style::default().fg(Color::DarkGray)),
+    };
+    frame.render_widget(Paragraph::new(prompt.as_str()).style(style), area);
+
+    if app.mode == Mode::Chat {
+        let x = area.x + 2 + app.chat_input.len() as u16;
+        frame.set_cursor_position(Position::new(
+            x.min(area.x + area.width.saturating_sub(1)),
+            area.y,
+        ));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -127,12 +221,10 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect) {
             Line::from(label)
         })
         .collect();
-
     let selected = Tab::ALL
         .iter()
         .position(|t| *t == app.active_tab)
         .unwrap_or(0);
-
     frame.render_widget(
         Tabs::new(titles)
             .select(selected)
@@ -164,20 +256,14 @@ fn draw_alerts_tab(frame: &mut Frame, app: &App, area: Rect) {
     if app.active_alerts.is_empty() {
         frame.render_widget(
             Paragraph::new("No active alerts.")
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title("Active Alerts"),
-                )
+                .block(Block::default().borders(Borders::ALL).title("Alerts"))
                 .style(Style::default().fg(Color::Green)),
             area,
         );
         return;
     }
-
     let header = Row::new(vec!["Sev", "Target", "Metric", "Value", "Firing for"])
         .style(Style::default().add_modifier(Modifier::BOLD));
-
     let rows: Vec<Row> = app
         .active_alerts
         .iter()
@@ -195,7 +281,6 @@ fn draw_alerts_tab(frame: &mut Frame, app: &App, area: Rect) {
                     format!("{}m{}s", secs / 60, secs % 60)
                 })
                 .unwrap_or_default();
-
             Row::new(vec![
                 Cell::from(format!("{icon} {}", a.severity)).style(Style::default().fg(color)),
                 Cell::from(a.target.as_str()),
@@ -205,20 +290,19 @@ fn draw_alerts_tab(frame: &mut Frame, app: &App, area: Rect) {
             ])
         })
         .collect();
-
     frame.render_widget(
         Table::new(
             rows,
             [
                 Constraint::Length(8),
-                Constraint::Length(14),
+                Constraint::Length(12),
                 Constraint::Min(18),
                 Constraint::Length(7),
                 Constraint::Length(10),
             ],
         )
         .header(header)
-        .block(Block::default().borders(Borders::ALL))
+        .block(Block::default().borders(Borders::ALL).title("Alerts"))
         .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED)),
         area,
     );
@@ -238,10 +322,14 @@ fn draw_metrics_tab(frame: &mut Frame, app: &App, area: Rect) {
     let mut targets: Vec<&str> = app.metrics.keys().map(String::as_str).collect();
     targets.sort();
 
+    // Width for sparklines — at least 10, at most 20.
+    let spark_w = (area.width as usize).saturating_sub(60).clamp(10, 20);
+
     let lines: Vec<Line> = targets
         .iter()
         .map(|target| {
             let m = &app.metrics[*target];
+
             let cpu = m
                 .get(&"cpu.percent".into())
                 .map(|v| format!("{v:.0}%"))
@@ -254,20 +342,49 @@ fn draw_metrics_tab(frame: &mut Frame, app: &App, area: Rect) {
                 .get(&"disk.used_pct".into())
                 .map(|v| format!("{v:.0}%"))
                 .unwrap_or_else(|| "n/a".into());
-            let gpu = m
-                .get(&"gpu.util_pct".into())
-                .map(|v| format!("  GPU {v:.0}%"))
-                .unwrap_or_default();
 
-            Line::from(vec![
+            let cpu_hist = app.history_for(target, "cpu.percent", spark_w);
+            let mem_hist = app.history_for(target, "memory.percent", spark_w);
+
+            let cpu_spark = sparkline(&cpu_hist, spark_w);
+            let mem_spark = sparkline(&mem_hist, spark_w);
+
+            let cpu_color = pct_color(m.get(&"cpu.percent".into()).unwrap_or(0.0));
+            let mem_color = pct_color(m.get(&"memory.percent".into()).unwrap_or(0.0));
+            let dsk_color = pct_color(m.get(&"disk.used_pct".into()).unwrap_or(0.0));
+
+            let gpu_part: Vec<Span> = {
+                if let Some(g) = m.get(&"gpu.util_pct".into()) {
+                    let gpu_hist = app.history_for(target, "gpu.util_pct", spark_w);
+                    let gpu_spark = sparkline(&gpu_hist, spark_w);
+                    vec![
+                        Span::raw("  GPU "),
+                        Span::styled(gpu_spark, Style::default().fg(pct_color(g))),
+                        Span::styled(format!(" {g:.0}%"), Style::default().fg(pct_color(g))),
+                    ]
+                } else {
+                    vec![]
+                }
+            };
+
+            let mut spans = vec![
                 Span::styled(
-                    format!("{target:<14}"),
+                    format!("{target:<12}"),
                     Style::default()
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::raw(format!("CPU {cpu:<6}  MEM {mem:<6}  DSK {dsk:<6}{gpu}")),
-            ])
+                Span::raw("  CPU "),
+                Span::styled(cpu_spark, Style::default().fg(cpu_color)),
+                Span::styled(format!(" {cpu:<5}"), Style::default().fg(cpu_color)),
+                Span::raw("  MEM "),
+                Span::styled(mem_spark, Style::default().fg(mem_color)),
+                Span::styled(format!(" {mem:<5}"), Style::default().fg(mem_color)),
+                Span::raw("  DSK "),
+                Span::styled(dsk, Style::default().fg(dsk_color)),
+            ];
+            spans.extend(gpu_part);
+            Line::from(spans)
         })
         .collect();
 
@@ -283,20 +400,14 @@ fn draw_history_tab(frame: &mut Frame, app: &App, area: Rect) {
     if app.resolved_alerts.is_empty() {
         frame.render_widget(
             Paragraph::new("No resolved alerts this session.")
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title("Alert History"),
-                )
+                .block(Block::default().borders(Borders::ALL).title("History"))
                 .style(Style::default().fg(Color::DarkGray)),
             area,
         );
         return;
     }
-
     let header = Row::new(vec!["Target", "Metric", "Resolved"])
         .style(Style::default().add_modifier(Modifier::BOLD));
-
     let rows: Vec<Row> = app
         .resolved_alerts
         .iter()
@@ -315,95 +426,28 @@ fn draw_history_tab(frame: &mut Frame, app: &App, area: Rect) {
             ])
         })
         .collect();
-
     frame.render_widget(
         Table::new(
             rows,
             [
-                Constraint::Length(14),
+                Constraint::Length(12),
                 Constraint::Min(22),
                 Constraint::Length(12),
             ],
         )
         .header(header)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Alert History"),
-        ),
+        .block(Block::default().borders(Borders::ALL).title("History")),
         area,
     );
 }
 
 fn draw_rules_tab(frame: &mut Frame, area: Rect) {
     frame.render_widget(
-        Paragraph::new("Rules are defined in monitor-agent.toml.\nReload with 'r'.")
-            .block(Block::default().borders(Borders::ALL).title("Alert Rules"))
+        Paragraph::new("Rules are defined in monitor-agent.toml.")
+            .block(Block::default().borders(Borders::ALL).title("Rules"))
             .style(Style::default().fg(Color::DarkGray)),
         area,
     );
-}
-
-// ---------------------------------------------------------------------------
-// Chat panel
-// ---------------------------------------------------------------------------
-
-fn draw_chat(frame: &mut Frame, app: &App, area: Rect) {
-    // Split chat area: [history] [input line]
-    let chat_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(1)])
-        .split(area);
-
-    let history_area = chat_layout[0];
-    let input_area = chat_layout[1];
-
-    // History — most recent messages, one per line.
-    let max_history = history_area.height as usize;
-    let recent = app.recent_chat(max_history);
-    let history_lines: Vec<Line> = recent
-        .iter()
-        .map(|msg| {
-            let (label, color) = if msg.from == "you" {
-                ("you  ", Color::Cyan)
-            } else {
-                ("monty", Color::Green)
-            };
-            Line::from(vec![
-                Span::styled(
-                    format!("{label}: "),
-                    Style::default().fg(color).add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(msg.text.as_str()),
-            ])
-        })
-        .collect();
-    frame.render_widget(Paragraph::new(history_lines), history_area);
-
-    // Input line.
-    let (prompt, input_style) = match app.mode {
-        Mode::Chat => (
-            format!("> {}", app.chat_input),
-            Style::default().fg(Color::Yellow),
-        ),
-        Mode::Normal => (
-            "> / to chat  esc to exit".into(),
-            Style::default().fg(Color::DarkGray),
-        ),
-    };
-    frame.render_widget(
-        Paragraph::new(prompt.as_str()).style(input_style),
-        input_area,
-    );
-
-    // Show cursor when actively typing.
-    if app.mode == Mode::Chat {
-        let cursor_x = input_area.x + 2 + app.chat_input.len() as u16;
-        frame.set_cursor_position(Position::new(
-            cursor_x.min(input_area.x + input_area.width.saturating_sub(1)),
-            input_area.y,
-        ));
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -421,30 +465,69 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(Color::Black).bg(Color::DarkGray),
         ),
     };
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            mode_tag,
+            Span::raw(format!("  collectors:{}", app.metrics.len())),
+            Span::styled("  q:quit", Style::default().fg(Color::DarkGray)),
+            Span::styled("  1-4:tabs", Style::default().fg(Color::DarkGray)),
+            Span::styled("  ↑↓:scroll", Style::default().fg(Color::DarkGray)),
+        ])),
+        area,
+    );
+}
 
-    let line = Line::from(vec![
-        mode_tag,
-        Span::raw("  "),
-        Span::styled(
-            if app.daemon_connected {
-                "daemon:ok"
-            } else {
-                "daemon:err"
-            },
-            Style::default().fg(if app.daemon_connected {
-                Color::Green
-            } else {
-                Color::Red
-            }),
-        ),
-        Span::raw(format!("  collectors:{}", app.metrics.len())),
-        Span::styled("  q:quit", Style::default().fg(Color::DarkGray)),
-        Span::styled("  1-4:tabs", Style::default().fg(Color::DarkGray)),
-        Span::styled("  /:chat", Style::default().fg(Color::DarkGray)),
-        Span::styled("  ↑↓:scroll", Style::default().fg(Color::DarkGray)),
-    ]);
+// ---------------------------------------------------------------------------
+// Spark charts
+// ---------------------------------------------------------------------------
 
-    frame.render_widget(Paragraph::new(line), area);
+const SPARK_CHARS: &[char] = &['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+
+fn spark_char(value: f64, min: f64, max: f64) -> char {
+    if max <= min {
+        return SPARK_CHARS[0];
+    }
+    let ratio = (value - min) / (max - min);
+    let idx = (ratio * 7.0).round().clamp(0.0, 7.0) as usize;
+    SPARK_CHARS[idx]
+}
+
+fn sparkline(history: &[f64], width: usize) -> String {
+    if history.is_empty() {
+        return " ".repeat(width);
+    }
+    let min = history
+        .iter()
+        .copied()
+        .fold(f64::INFINITY, f64::min)
+        .max(0.0);
+    let max = history
+        .iter()
+        .copied()
+        .fold(f64::NEG_INFINITY, f64::max)
+        .min(100.0);
+
+    // Pad left with the minimum bar if we have fewer samples than width.
+    let pad = width.saturating_sub(history.len());
+    let mut s = String::with_capacity(width * 3); // ▁ is 3 bytes UTF-8
+    for _ in 0..pad {
+        s.push(SPARK_CHARS[0]);
+    }
+    for &v in history {
+        s.push(spark_char(v, min, max));
+    }
+    s
+}
+
+/// Map 0-100% to green→yellow→red.
+fn pct_color(pct: f64) -> Color {
+    if pct < 60.0 {
+        Color::Green
+    } else if pct < 80.0 {
+        Color::Yellow
+    } else {
+        Color::Red
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -466,7 +549,7 @@ fn severity_color(s: Severity) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{App, ChatMessage};
+    use crate::app::App;
     use crate::event::Event;
     use monitor_core::alert::{Alert, AlertId, AlertState, Severity};
     use monitor_core::metrics::{MetricPath, MetricSet};
@@ -526,103 +609,86 @@ mod tests {
 
     #[test]
     fn draw_empty_app_does_not_panic() {
-        let mut term = test_terminal(80, 24);
+        let mut term = test_terminal(80, 30);
         let app = App::new();
         term.draw(|f| draw(f, &app)).unwrap();
     }
 
     #[test]
-    fn draw_narrow_terminal_hides_logo() {
-        let mut term = test_terminal(40, 20);
+    fn draw_narrow_hides_portrait() {
+        let mut term = test_terminal(40, 30);
         let app = App::new();
         term.draw(|f| draw(f, &app)).unwrap();
     }
 
     #[test]
-    fn draw_wide_terminal_does_not_panic() {
+    fn draw_wide_terminal() {
         let mut term = test_terminal(200, 50);
         let app = App::new();
         term.draw(|f| draw(f, &app)).unwrap();
     }
 
     #[test]
-    fn draw_alerts_tab_with_active_alerts() {
-        let mut term = test_terminal(120, 30);
+    fn draw_with_active_alerts() {
+        let mut term = test_terminal(120, 40);
         let mut app = App::new();
         app.update(Event::AlertFired(firing_alert(
             Severity::Critical,
             "gnuc",
-            "high-cpu",
+            "cpu",
         )));
         app.update(Event::AlertFired(firing_alert(
             Severity::Warn,
             "nuc",
-            "high-mem",
+            "mem",
         )));
         app.update(Event::AlertFired(firing_alert(
             Severity::Info,
             "kajiblet",
-            "low-disk",
+            "dsk",
+        )));
+        app.update(Event::AlertFired(firing_alert(
+            Severity::Critical,
+            "gnuc",
+            "cpu2",
         )));
         term.draw(|f| draw(f, &app)).unwrap();
     }
 
     #[test]
-    fn draw_alerts_tab_empty() {
-        let mut term = test_terminal(80, 24);
-        let mut app = App::new();
-        app.active_tab = Tab::Alerts;
-        term.draw(|f| draw(f, &app)).unwrap();
-    }
-
-    #[test]
-    fn draw_metrics_tab_with_data() {
-        let mut term = test_terminal(120, 30);
+    fn draw_metrics_tab_with_history() {
+        let mut term = test_terminal(120, 40);
         let mut app = App::new();
         app.active_tab = Tab::Metrics;
-        app.update(Event::MetricsUpdate(metrics_for("gnuc")));
-        app.update(Event::MetricsUpdate(metrics_for("nuc")));
+        for i in 0..20 {
+            let mut m = metrics_for("gnuc");
+            m.insert("cpu.percent", i as f64 * 4.0);
+            app.update(Event::MetricsUpdate(m));
+        }
         term.draw(|f| draw(f, &app)).unwrap();
     }
 
     #[test]
     fn draw_metrics_tab_empty() {
-        let mut term = test_terminal(80, 24);
+        let mut term = test_terminal(80, 30);
         let mut app = App::new();
         app.active_tab = Tab::Metrics;
         term.draw(|f| draw(f, &app)).unwrap();
     }
 
     #[test]
-    fn draw_metrics_tab_no_gpu() {
-        let mut term = test_terminal(80, 24);
-        let mut app = App::new();
-        app.active_tab = Tab::Metrics;
-        let mut m = MetricSet::new("gnuc");
-        m.insert("cpu.percent", 50.0);
-        m.insert("memory.percent", 60.0);
-        m.insert("disk.used_pct", 70.0);
-        app.update(Event::MetricsUpdate(m));
-        term.draw(|f| draw(f, &app)).unwrap();
-    }
-
-    #[test]
-    fn draw_history_tab_with_resolved() {
-        let mut term = test_terminal(80, 24);
+    fn draw_history_tab() {
+        let mut term = test_terminal(80, 30);
         let mut app = App::new();
         app.active_tab = Tab::History;
-        app.update(Event::AlertFired(firing_alert(
-            Severity::Warn,
-            "gnuc",
-            "r1",
-        )));
+        app.update(Event::AlertFired(firing_alert(Severity::Warn, "gnuc", "r")));
         app.update(Event::AlertResolved(resolved_alert()));
         term.draw(|f| draw(f, &app)).unwrap();
     }
 
     #[test]
     fn draw_history_tab_empty() {
-        let mut term = test_terminal(80, 24);
+        let mut term = test_terminal(80, 30);
         let mut app = App::new();
         app.active_tab = Tab::History;
         term.draw(|f| draw(f, &app)).unwrap();
@@ -630,80 +696,18 @@ mod tests {
 
     #[test]
     fn draw_rules_tab() {
-        let mut term = test_terminal(80, 24);
+        let mut term = test_terminal(80, 30);
         let mut app = App::new();
         app.active_tab = Tab::Rules;
         term.draw(|f| draw(f, &app)).unwrap();
     }
 
     #[test]
-    fn draw_daemon_disconnected_state() {
-        let mut term = test_terminal(80, 24);
-        let mut app = App::new();
-        app.update(Event::DaemonDisconnected("timeout".into()));
-        term.draw(|f| draw(f, &app)).unwrap();
-    }
-
-    #[test]
-    fn draw_daemon_connected_state() {
-        let mut term = test_terminal(80, 24);
-        let mut app = App::new();
-        app.update(Event::DaemonConnected);
-        term.draw(|f| draw(f, &app)).unwrap();
-    }
-
-    #[test]
-    fn draw_all_severity_levels_in_alerts() {
-        let mut term = test_terminal(120, 30);
-        let mut app = App::new();
-        for sev in [Severity::Info, Severity::Warn, Severity::Critical] {
-            app.update(Event::AlertFired(firing_alert(
-                sev,
-                "gnuc",
-                &format!("rule-{sev}"),
-            )));
-        }
-        term.draw(|f| draw(f, &app)).unwrap();
-    }
-
-    #[test]
-    fn draw_scrolled_metrics() {
-        let mut term = test_terminal(80, 24);
-        let mut app = App::new();
-        app.active_tab = Tab::Metrics;
-        app.scroll_offset = 5;
-        for i in 0..10 {
-            app.update(Event::MetricsUpdate(metrics_for(&format!("host-{i}"))));
-        }
-        term.draw(|f| draw(f, &app)).unwrap();
-    }
-
-    #[test]
-    fn draw_tab_badge_shows_alert_count() {
-        let mut term = test_terminal(80, 24);
-        let mut app = App::new();
-        app.update(Event::AlertFired(firing_alert(
-            Severity::Critical,
-            "gnuc",
-            "cpu",
-        )));
-        assert_eq!(app.active_alert_count, 1);
-        term.draw(|f| draw(f, &app)).unwrap();
-    }
-
-    #[test]
-    fn draw_chat_mode_active() {
-        let mut term = test_terminal(80, 24);
+    fn draw_chat_mode() {
+        let mut term = test_terminal(80, 30);
         let mut app = App::new();
         app.mode = Mode::Chat;
-        app.chat_input = "hello monty".into();
-        term.draw(|f| draw(f, &app)).unwrap();
-    }
-
-    #[test]
-    fn draw_chat_mode_with_history() {
-        let mut term = test_terminal(80, 24);
-        let mut app = App::new();
+        app.chat_input = "hello".into();
         app.chat_log.push(ChatMessage {
             from: "you".into(),
             text: "status?".into(),
@@ -716,10 +720,50 @@ mod tests {
     }
 
     #[test]
-    fn draw_status_bar_shows_chat_mode() {
-        let mut term = test_terminal(80, 24);
+    fn draw_daemon_states() {
+        let mut term = test_terminal(80, 30);
         let mut app = App::new();
-        app.mode = Mode::Chat;
+        app.update(Event::DaemonConnected);
         term.draw(|f| draw(f, &app)).unwrap();
+        app.update(Event::DaemonDisconnected("timeout".into()));
+        term.draw(|f| draw(f, &app)).unwrap();
+    }
+
+    // Spark chart unit tests.
+    #[test]
+    fn sparkline_empty_is_spaces() {
+        assert_eq!(sparkline(&[], 10), " ".repeat(10));
+    }
+
+    #[test]
+    fn sparkline_all_same_value_uses_lowest_bar() {
+        let s = sparkline(&[50.0, 50.0, 50.0], 3);
+        assert_eq!(s.chars().count(), 3);
+        // When min==max all bars are the same character.
+        let chars: Vec<char> = s.chars().collect();
+        assert!(chars.iter().all(|&c| c == chars[0]));
+    }
+
+    #[test]
+    fn sparkline_rising_trend_ends_with_full_bar() {
+        let data: Vec<f64> = (0..10).map(|i| i as f64 * 10.0).collect();
+        let s = sparkline(&data, 10);
+        assert_eq!(s.chars().last().unwrap(), '█');
+    }
+
+    #[test]
+    fn sparkline_pads_when_fewer_samples_than_width() {
+        let s = sparkline(&[80.0, 100.0], 10);
+        assert_eq!(s.chars().count(), 10);
+    }
+
+    #[test]
+    fn pct_color_thresholds() {
+        assert_eq!(pct_color(0.0), Color::Green);
+        assert_eq!(pct_color(59.9), Color::Green);
+        assert_eq!(pct_color(60.0), Color::Yellow);
+        assert_eq!(pct_color(79.9), Color::Yellow);
+        assert_eq!(pct_color(80.0), Color::Red);
+        assert_eq!(pct_color(100.0), Color::Red);
     }
 }

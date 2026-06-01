@@ -2,7 +2,7 @@ use crate::event::Event;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use monitor_core::alert::{Alert, AlertState};
 use monitor_core::metrics::MetricSet;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 /// Whether the user is typing in the chat field or navigating the dashboard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -61,6 +61,8 @@ pub struct App {
     pub chat_input: String,
     /// Chat log — capped at 200 entries.
     pub chat_log: Vec<ChatMessage>,
+    /// Rolling metric history: target → metric_path → last 60 values.
+    pub metrics_history: HashMap<String, HashMap<String, VecDeque<f64>>>,
 }
 
 impl App {
@@ -79,6 +81,23 @@ impl App {
             mode: Mode::Normal,
             chat_input: String::new(),
             chat_log: Vec::new(),
+            metrics_history: HashMap::new(),
+        }
+    }
+
+    /// Return up to `width` recent samples for `(target, metric_path)` as a Vec.
+    pub fn history_for(&self, target: &str, metric: &str, width: usize) -> Vec<f64> {
+        let dq = self.metrics_history.get(target).and_then(|t| t.get(metric));
+        match dq {
+            None => vec![],
+            Some(dq) => {
+                let v: Vec<f64> = dq.iter().copied().collect();
+                if v.len() > width {
+                    v[v.len() - width..].to_vec()
+                } else {
+                    v
+                }
+            }
         }
     }
 
@@ -97,6 +116,18 @@ impl App {
             Event::Key(key) => self.handle_key(key),
             Event::Resize(_, _) => {}
             Event::MetricsUpdate(metrics) => {
+                // Push each value into its rolling history (cap 60).
+                let target_hist = self
+                    .metrics_history
+                    .entry(metrics.target.clone())
+                    .or_default();
+                for (path, value) in &metrics.values {
+                    let dq = target_hist.entry(path.0.clone()).or_default();
+                    dq.push_back(value.value);
+                    if dq.len() > 60 {
+                        dq.pop_front();
+                    }
+                }
                 self.metrics.insert(metrics.target.clone(), metrics);
             }
             Event::AlertFired(alert) => {
