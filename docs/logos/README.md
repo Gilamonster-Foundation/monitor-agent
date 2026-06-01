@@ -2,7 +2,50 @@
 
 Source image: `Monty_Lizard_Large.png` (1536×1024, RGBA).
 
-Generated with `chafa 1.18.2` from that source.
+Square PNG assets generated with Pillow (centered, transparent background).
+ANSI/ASCII art generated with `chafa 1.18.2`.
+
+## Square PNG Assets
+
+| File | Size | Use case |
+|---|---|---|
+| `monty-256.png` | 256×256 | README header, docs |
+| `monty-128.png` | 128×128 | App icon, sidebar |
+| `monty-64.png` | 64×64 | Toolbar, avatar |
+| `monty-32.png` | 32×32 | Favicon, small icon |
+| `monty-16.png` | 16×16 | Browser tab favicon |
+
+<p align="center">
+  <img src="monty-256.png" width="256" />
+  &nbsp;&nbsp;
+  <img src="monty-128.png" width="128" />
+  &nbsp;&nbsp;
+  <img src="monty-64.png" width="64" />
+  &nbsp;&nbsp;
+  <img src="monty-32.png" width="32" />
+  &nbsp;&nbsp;
+  <img src="monty-16.png" width="16" />
+</p>
+
+### Regenerating square PNGs
+
+```bash
+~/venv/bin/python3 - << 'EOF'
+from PIL import Image
+
+src = "docs/logos/Monty_Lizard_Large.png"
+out = "docs/logos"
+
+img = Image.open(src).convert("RGBA")
+w, h = img.size
+side = max(w, h)
+square = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+square.paste(img, ((side - w) // 2, (side - h) // 2))
+
+for size in [256, 128, 64, 32, 16]:
+    square.resize((size, size), Image.LANCZOS).save(f"{out}/monty-{size}.png")
+EOF
+```
 
 ## Assets
 
