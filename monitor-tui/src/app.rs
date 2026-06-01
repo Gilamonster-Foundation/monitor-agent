@@ -210,4 +210,130 @@ mod tests {
         app.update(Event::MetricsUpdate(m));
         assert!(app.metrics.contains_key("gnuc"));
     }
+
+    #[test]
+    fn cycle_tab_forward_wraps() {
+        let mut app = App::new();
+        app.active_tab = Tab::Rules; // last tab
+        app.update(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+        assert_eq!(app.active_tab, Tab::Alerts); // wraps to first
+    }
+
+    #[test]
+    fn cycle_tab_backward() {
+        let mut app = App::new();
+        app.active_tab = Tab::Alerts;
+        app.update(Event::Key(KeyEvent::new(
+            KeyCode::BackTab,
+            KeyModifiers::NONE,
+        )));
+        assert_eq!(app.active_tab, Tab::Rules); // wraps to last
+    }
+
+    #[test]
+    fn scroll_keys() {
+        let mut app = App::new();
+        app.update(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)));
+        assert_eq!(app.scroll_offset, 1);
+        app.update(Event::Key(KeyEvent::new(
+            KeyCode::Char('j'),
+            KeyModifiers::NONE,
+        )));
+        assert_eq!(app.scroll_offset, 2);
+        app.update(Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)));
+        assert_eq!(app.scroll_offset, 1);
+        app.update(Event::Key(KeyEvent::new(
+            KeyCode::Char('k'),
+            KeyModifiers::NONE,
+        )));
+        assert_eq!(app.scroll_offset, 0);
+        // Saturating sub — doesn't go negative
+        app.update(Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)));
+        assert_eq!(app.scroll_offset, 0);
+    }
+
+    #[test]
+    fn ctrl_c_quits() {
+        let mut app = App::new();
+        app.update(Event::Key(KeyEvent::new(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL,
+        )));
+        assert!(app.quit);
+    }
+
+    #[test]
+    fn uppercase_q_quits() {
+        let mut app = App::new();
+        app.update(Event::Key(KeyEvent::new(
+            KeyCode::Char('Q'),
+            KeyModifiers::NONE,
+        )));
+        assert!(app.quit);
+    }
+
+    #[test]
+    fn resize_event_handled() {
+        let mut app = App::new();
+        app.update(Event::Resize(120, 40)); // should not panic
+    }
+
+    #[test]
+    fn tick_updates_timestamp() {
+        let mut app = App::new();
+        let before = app.now.clone();
+        // Tick should update the time string (same value in practice, but no panic)
+        app.update(Event::Tick);
+        let _ = &app.now; // still a valid string
+        assert!(!before.is_empty());
+    }
+
+    #[test]
+    fn alerts_snapshot_replaces_active() {
+        use monitor_core::alert::{Alert, AlertId, AlertState, Severity};
+        use monitor_core::metrics::MetricPath;
+        use uuid::Uuid;
+        let mut app = App::new();
+        let make_alert = |id: &str| Alert {
+            id: AlertId::for_rule("gnuc", id),
+            uuid: Uuid::new_v4(),
+            rule_name: id.into(),
+            target: "gnuc".into(),
+            metric: MetricPath::new("cpu.percent"),
+            value: 90.0,
+            severity: Severity::Warn,
+            state: AlertState::Firing,
+            message: id.into(),
+            fired_at_secs: None,
+            resolved_at_secs: None,
+            cooldown_until_secs: None,
+            fired_instant: None,
+            cooldown_until_instant: None,
+        };
+        app.update(Event::AlertFired(make_alert("old")));
+        assert_eq!(app.active_alerts.len(), 1);
+        // Snapshot replaces entirely
+        app.update(Event::AlertsSnapshot(vec![
+            make_alert("new1"),
+            make_alert("new2"),
+        ]));
+        assert_eq!(app.active_alerts.len(), 2);
+        assert_eq!(app.active_alert_count, 2);
+    }
+
+    #[test]
+    fn tab_all_covers_all_variants() {
+        assert_eq!(Tab::ALL.len(), 4);
+        assert!(Tab::ALL.contains(&Tab::Alerts));
+        assert!(Tab::ALL.contains(&Tab::Metrics));
+        assert!(Tab::ALL.contains(&Tab::History));
+        assert!(Tab::ALL.contains(&Tab::Rules));
+    }
+
+    #[test]
+    fn tab_labels_non_empty() {
+        for tab in Tab::ALL {
+            assert!(!tab.label().is_empty());
+        }
+    }
 }

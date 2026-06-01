@@ -2,13 +2,14 @@
 #
 # Pre-push hook for monitor-agent
 #
-# Runs the same lint + test gates that CI runs, locally, before any push
-# reaches origin. If this passes, CI should pass too.
+# Runs the same lint + test + coverage gates that CI runs, locally,
+# before any push reaches origin. If this passes, CI should pass too.
 #
 # Install: `just install-hooks`
 #
 # PIPELINE PARITY: This hook mirrors .github/workflows/ci.yml.
-#   `just check` matches the lint + test jobs (fmt + clippy + cargo test)
+#   `just check`  — matches the lint + test jobs (fmt + clippy + cargo test)
+#   `just cov-ci` — matches the coverage job (80% line coverage floor)
 # When editing this hook, update the workflow to match.
 # When editing the workflow, update this hook to match.
 #
@@ -24,7 +25,18 @@ if ! command -v just >/dev/null 2>&1; then
     exit 1
 fi
 
+if ! command -v cargo-llvm-cov >/dev/null 2>&1; then
+    echo "pre-push: 'cargo-llvm-cov' not found in PATH"
+    echo "          install via: cargo install cargo-llvm-cov"
+    exit 1
+fi
+
 echo "[pre-push] running just check..."
 just check
+
+echo "[pre-push] running just cov-ci (80% floor)..."
+LLVM_COV=/opt/homebrew/opt/llvm/bin/llvm-cov \
+LLVM_PROFDATA=/opt/homebrew/opt/llvm/bin/llvm-profdata \
+  just cov-ci
 
 echo "[pre-push] OK"

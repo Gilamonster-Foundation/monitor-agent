@@ -416,4 +416,91 @@ mod tests {
         let msg = rule.format_message("gnuc", 92.0);
         assert_eq!(msg, "gnuc: CPU at 92%");
     }
+
+    #[test]
+    fn severity_ordering() {
+        assert!(Severity::Critical > Severity::Warn);
+        assert!(Severity::Warn > Severity::Info);
+    }
+
+    #[test]
+    fn severity_display() {
+        assert_eq!(Severity::Info.to_string(), "INFO");
+        assert_eq!(Severity::Warn.to_string(), "WARN");
+        assert_eq!(Severity::Critical.to_string(), "CRIT");
+    }
+
+    #[test]
+    fn condition_threshold_accessor() {
+        assert_eq!(Condition::GreaterThan(75.0).threshold(), 75.0);
+        assert_eq!(Condition::LessThan(10.0).threshold(), 10.0);
+        assert_eq!(Condition::Equals(50.0).threshold(), 50.0);
+    }
+
+    #[test]
+    fn alert_id_display() {
+        let id = AlertId::for_rule("nuc", "high-mem");
+        assert_eq!(id.to_string(), "nuc::high-mem");
+    }
+
+    #[test]
+    fn alert_not_in_cooldown_initially() {
+        use uuid::Uuid;
+        let a = Alert {
+            id: AlertId::for_rule("gnuc", "test"),
+            uuid: Uuid::new_v4(),
+            rule_name: "test".into(),
+            target: "gnuc".into(),
+            metric: MetricPath::new("cpu.percent"),
+            value: 90.0,
+            severity: Severity::Warn,
+            state: AlertState::Firing,
+            message: "test".into(),
+            fired_at_secs: None,
+            resolved_at_secs: None,
+            cooldown_until_secs: None,
+            fired_instant: None,
+            cooldown_until_instant: None,
+        };
+        assert!(!a.in_cooldown());
+        assert!(a.is_firing());
+        assert!(!a.is_resolved());
+    }
+
+    #[test]
+    fn engine_active_alerts_returns_only_firing() {
+        let mut engine = AlertEngine::new(vec![cpu_rule(80.0)]);
+        engine.evaluate(&metrics("gnuc", 90.0)); // fires
+        engine.evaluate(&metrics("gnuc", 50.0)); // resolves
+        assert!(engine.active_alerts().is_empty());
+        assert_eq!(engine.all_alerts().len(), 1); // resolved still tracked
+    }
+
+    #[test]
+    fn engine_ignores_unmatched_target() {
+        let mut rule = cpu_rule(80.0);
+        rule.target = TargetPattern("nuc".into()); // only fires for nuc
+        let mut engine = AlertEngine::new(vec![rule]);
+        let transitions = engine.evaluate(&metrics("gnuc", 90.0)); // wrong target
+        assert!(transitions.is_empty());
+    }
+
+    #[test]
+    fn engine_ignores_missing_metric() {
+        let mut engine = AlertEngine::new(vec![cpu_rule(80.0)]);
+        let m = MetricSet::new("gnuc"); // no cpu.percent inserted
+        let transitions = engine.evaluate(&m);
+        assert!(transitions.is_empty());
+    }
+
+    #[test]
+    fn rule_format_message_value_variants() {
+        let mut rule = cpu_rule(80.0);
+        rule.message = "v0={value:.0} v1={value:.1} vx={value}".into();
+        let msg = rule.format_message("gnuc", 92.0);
+        assert!(msg.contains("92")); // .0 and .1
+        assert!(msg.contains("v0=92"));
+        assert!(msg.contains("v1=92.0"));
+        assert!(msg.contains("vx=92"));
+    }
 }

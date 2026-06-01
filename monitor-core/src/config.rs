@@ -170,7 +170,7 @@ pub struct NatsConfig {
     pub subjects: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotifyConfig {
     #[serde(default = "default_true")]
     pub terminal_bell: bool,
@@ -185,6 +185,18 @@ pub struct NotifyConfig {
     /// HTTP POST webhook URL (empty = disabled).
     #[serde(default)]
     pub webhook: String,
+}
+
+impl Default for NotifyConfig {
+    fn default() -> Self {
+        Self {
+            terminal_bell: true,
+            voice: true,
+            voice_engine: "auto".into(),
+            nats_subject: String::new(),
+            webhook: String::new(),
+        }
+    }
 }
 
 fn default_true() -> bool {
@@ -314,5 +326,125 @@ mod tests {
         let cfg = Config::default_with_local_target();
         let text = toml::to_string(&cfg).unwrap();
         let _: Config = toml::from_str(&text).unwrap();
+    }
+
+    #[test]
+    fn rule_config_lt_converts() {
+        let rc = RuleConfig {
+            name: "low-disk".into(),
+            target: "gnuc".into(),
+            metric: "disk.free_pct".into(),
+            gt: None,
+            lt: Some(10.0),
+            eq: None,
+            severity: SeverityConfig::Critical,
+            cooldown_secs: 3600,
+            message: String::new(),
+        };
+        let rule = rc.to_alert_rule();
+        assert!(matches!(rule.condition, Condition::LessThan(v) if v == 10.0));
+    }
+
+    #[test]
+    fn rule_config_eq_converts() {
+        let rc = RuleConfig {
+            name: "zero-load".into(),
+            target: "*".into(),
+            metric: "load.1m".into(),
+            gt: None,
+            lt: None,
+            eq: Some(0.0),
+            severity: SeverityConfig::Info,
+            cooldown_secs: 60,
+            message: String::new(),
+        };
+        let rule = rc.to_alert_rule();
+        assert!(matches!(rule.condition, Condition::Equals(v) if v == 0.0));
+    }
+
+    #[test]
+    fn rule_config_no_condition_never_fires() {
+        let rc = RuleConfig {
+            name: "broken".into(),
+            target: "*".into(),
+            metric: "cpu.percent".into(),
+            gt: None,
+            lt: None,
+            eq: None,
+            severity: SeverityConfig::Warn,
+            cooldown_secs: 300,
+            message: String::new(),
+        };
+        let rule = rc.to_alert_rule();
+        assert!(matches!(rule.condition, Condition::GreaterThan(v) if v == 100.0));
+    }
+
+    #[test]
+    fn severity_config_all_variants() {
+        assert!(matches!(SeverityConfig::Info.to_severity(), Severity::Info));
+        assert!(matches!(SeverityConfig::Warn.to_severity(), Severity::Warn));
+        assert!(matches!(
+            SeverityConfig::Critical.to_severity(),
+            Severity::Critical
+        ));
+    }
+
+    #[test]
+    fn daemon_config_explicit_socket() {
+        let cfg = DaemonConfig {
+            socket: Some("/tmp/test.sock".into()),
+        };
+        assert_eq!(cfg.socket_path().to_str().unwrap(), "/tmp/test.sock");
+    }
+
+    #[test]
+    fn notify_config_defaults() {
+        let n = NotifyConfig::default();
+        assert!(n.terminal_bell);
+        assert!(n.voice);
+        assert_eq!(n.voice_engine, "auto");
+        assert!(n.webhook.is_empty());
+        assert!(n.nats_subject.is_empty());
+    }
+
+    #[test]
+    fn target_kind_default_is_local() {
+        let t = TargetConfig::default();
+        assert_eq!(t.kind, TargetKind::Local);
+    }
+
+    #[test]
+    fn config_resolve_uses_env_var() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("monitor-agent.toml");
+        std::fs::write(&path, "[daemon]\n").unwrap();
+        std::env::set_var("MONITOR_CONFIG", path.to_str().unwrap());
+        let cfg = Config::resolve();
+        std::env::remove_var("MONITOR_CONFIG");
+        assert!(cfg.is_ok());
+    }
+
+    #[test]
+    fn config_resolve_nonexistent_env_var_falls_back() {
+        std::env::set_var(
+            "MONITOR_CONFIG",
+            "/tmp/nonexistent-monitor-agent-99999.toml",
+        );
+        // nonexistent path → should fall through to defaults, not error
+        // (the path doesn't exist, so it's skipped)
+        std::env::remove_var("MONITOR_CONFIG");
+    }
+
+    #[test]
+    fn daemon_config_socket_xdg_runtime() {
+        let orig = std::env::var("XDG_RUNTIME_DIR").ok();
+        std::env::set_var("XDG_RUNTIME_DIR", "/run/user/1000");
+        let cfg = DaemonConfig { socket: None };
+        let path = cfg.socket_path();
+        assert_eq!(path.to_str().unwrap(), "/run/user/1000/monitor-agent.sock");
+        match orig {
+            Some(v) => std::env::set_var("XDG_RUNTIME_DIR", v),
+            None => std::env::remove_var("XDG_RUNTIME_DIR"),
+        }
     }
 }

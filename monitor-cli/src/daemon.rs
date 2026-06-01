@@ -186,3 +186,136 @@ pub async fn run_daemon(cfg: Config) -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use monitor_core::config::{Config, DaemonConfig, NotifyConfig, TargetConfig, TargetKind};
+
+    fn local_only_config() -> Config {
+        Config {
+            daemon: DaemonConfig { socket: None },
+            targets: vec![TargetConfig {
+                name: "local".into(),
+                kind: TargetKind::Local,
+                ..Default::default()
+            }],
+            nats: None,
+            rules: vec![],
+            notify: NotifyConfig::default(),
+        }
+    }
+
+    fn ssh_config() -> Config {
+        Config {
+            targets: vec![TargetConfig {
+                name: "remote".into(),
+                kind: TargetKind::Ssh,
+                host: Some("192.168.1.10".into()),
+                user: Some("hartsock".into()),
+                key: Some("~/.ssh/id_ed25519".into()),
+                ..Default::default()
+            }],
+            ..local_only_config()
+        }
+    }
+
+    fn prometheus_config() -> Config {
+        Config {
+            targets: vec![TargetConfig {
+                name: "gnuc".into(),
+                kind: TargetKind::Prometheus,
+                endpoint: Some("http://localhost:9090".into()),
+                ..Default::default()
+            }],
+            ..local_only_config()
+        }
+    }
+
+    fn prometheus_missing_endpoint_config() -> Config {
+        Config {
+            targets: vec![TargetConfig {
+                name: "gnuc".into(),
+                kind: TargetKind::Prometheus,
+                endpoint: None, // missing — should error
+                ..Default::default()
+            }],
+            ..local_only_config()
+        }
+    }
+
+    #[tokio::test]
+    async fn build_collectors_local_only() {
+        let cfg = local_only_config();
+        let collectors = build_collectors(&cfg).await.unwrap();
+        assert_eq!(collectors.len(), 1);
+        assert_eq!(collectors[0].name(), "local");
+    }
+
+    #[tokio::test]
+    async fn build_collectors_ssh_target() {
+        let cfg = ssh_config();
+        let collectors = build_collectors(&cfg).await.unwrap();
+        assert_eq!(collectors.len(), 1);
+        assert_eq!(collectors[0].name(), "remote");
+    }
+
+    #[tokio::test]
+    async fn build_collectors_prometheus_target() {
+        let cfg = prometheus_config();
+        let collectors = build_collectors(&cfg).await.unwrap();
+        assert_eq!(collectors.len(), 1);
+        assert_eq!(collectors[0].name(), "gnuc");
+    }
+
+    #[tokio::test]
+    async fn build_collectors_prometheus_missing_endpoint_errors() {
+        let cfg = prometheus_missing_endpoint_config();
+        let result = build_collectors(&cfg).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn build_collectors_empty_targets() {
+        let cfg = Config {
+            targets: vec![],
+            ..local_only_config()
+        };
+        let collectors = build_collectors(&cfg).await.unwrap();
+        assert!(collectors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn build_collectors_multiple_targets() {
+        let cfg = Config {
+            targets: vec![
+                TargetConfig {
+                    name: "local".into(),
+                    kind: TargetKind::Local,
+                    ..Default::default()
+                },
+                TargetConfig {
+                    name: "gnuc".into(),
+                    kind: TargetKind::Prometheus,
+                    endpoint: Some("http://localhost:9090".into()),
+                    ..Default::default()
+                },
+            ],
+            ..local_only_config()
+        };
+        let collectors = build_collectors(&cfg).await.unwrap();
+        assert_eq!(collectors.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn spawn_collectors_local_sends_connected_event() {
+        use monitor_tui::Event;
+        use tokio::sync::mpsc;
+        let (tx, mut rx) = mpsc::channel::<Event>(16);
+        let cfg = local_only_config();
+        spawn_collectors(cfg, tx).await.unwrap();
+        // The DaemonConnected event is sent synchronously before the async poll task starts.
+        let event = rx.recv().await.unwrap();
+        assert!(matches!(event, Event::DaemonConnected));
+    }
+}

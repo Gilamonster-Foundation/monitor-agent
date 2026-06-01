@@ -90,3 +90,33 @@ fn show_splash(
     terminal.draw(|frame| ui::draw(frame, app))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn splash_for_width_selects_correct_size() {
+        // Each width boundary should return a non-empty splash string.
+        assert!(!splash_for_width(10).is_empty()); // ≤20 → 10-col
+        assert!(!splash_for_width(20).is_empty());
+        assert!(!splash_for_width(21).is_empty()); // 21-40 → 20-col
+        assert!(!splash_for_width(40).is_empty());
+        assert!(!splash_for_width(41).is_empty()); // 41-80 → 40-col
+        assert!(!splash_for_width(80).is_empty());
+        assert!(!splash_for_width(81).is_empty()); // 81-120 → 80-col
+        assert!(!splash_for_width(120).is_empty());
+        assert!(!splash_for_width(121).is_empty()); // 121-160 → 120-col
+        assert!(!splash_for_width(160).is_empty());
+        assert!(!splash_for_width(161).is_empty()); // >160 → 160-col
+        assert!(!splash_for_width(250).is_empty());
+    }
+
+    #[test]
+    fn splash_for_width_small_terminal_returns_smallest() {
+        let small = splash_for_width(5);
+        let large = splash_for_width(200);
+        // Different sizes should return different (sized) content.
+        assert_ne!(small.len(), large.len());
+    }
+}

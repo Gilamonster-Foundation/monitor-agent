@@ -311,3 +311,233 @@ fn severity_color(s: Severity) -> Color {
         Severity::Info => Color::Blue,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::App;
+    use crate::event::Event;
+    use monitor_core::alert::{Alert, AlertId, AlertState, Severity};
+    use monitor_core::metrics::{MetricPath, MetricSet};
+    use ratatui::{backend::TestBackend, Terminal};
+    use uuid::Uuid;
+
+    fn test_terminal(width: u16, height: u16) -> Terminal<TestBackend> {
+        Terminal::new(TestBackend::new(width, height)).unwrap()
+    }
+
+    fn firing_alert(severity: Severity, target: &str, rule: &str) -> Alert {
+        Alert {
+            id: AlertId::for_rule(target, rule),
+            uuid: Uuid::new_v4(),
+            rule_name: rule.to_owned(),
+            target: target.to_owned(),
+            metric: MetricPath::new("cpu.percent"),
+            value: 90.0,
+            severity,
+            state: AlertState::Firing,
+            message: format!("{target}: CPU at 90%"),
+            fired_at_secs: Some(chrono::Utc::now().timestamp() - 120),
+            resolved_at_secs: None,
+            cooldown_until_secs: None,
+            fired_instant: None,
+            cooldown_until_instant: None,
+        }
+    }
+
+    fn resolved_alert() -> Alert {
+        Alert {
+            id: AlertId::for_rule("gnuc", "old-rule"),
+            uuid: Uuid::new_v4(),
+            rule_name: "old-rule".into(),
+            target: "gnuc".into(),
+            metric: MetricPath::new("memory.percent"),
+            value: 95.0,
+            severity: Severity::Warn,
+            state: AlertState::Resolved,
+            message: "gnuc: mem at 95%".into(),
+            fired_at_secs: Some(chrono::Utc::now().timestamp() - 600),
+            resolved_at_secs: Some(chrono::Utc::now().timestamp() - 60),
+            cooldown_until_secs: None,
+            fired_instant: None,
+            cooldown_until_instant: None,
+        }
+    }
+
+    fn metrics_for(target: &str) -> MetricSet {
+        let mut m = MetricSet::new(target);
+        m.insert("cpu.percent", 72.0);
+        m.insert("memory.percent", 48.0);
+        m.insert("disk.used_pct", 35.0);
+        m.insert("gpu.util_pct", 88.0);
+        m
+    }
+
+    #[test]
+    fn draw_empty_app_does_not_panic() {
+        let mut term = test_terminal(80, 24);
+        let app = App::new();
+        term.draw(|f| draw(f, &app)).unwrap();
+    }
+
+    #[test]
+    fn draw_narrow_terminal_does_not_panic() {
+        let mut term = test_terminal(20, 10);
+        let app = App::new();
+        term.draw(|f| draw(f, &app)).unwrap();
+    }
+
+    #[test]
+    fn draw_wide_terminal_does_not_panic() {
+        let mut term = test_terminal(200, 50);
+        let app = App::new();
+        term.draw(|f| draw(f, &app)).unwrap();
+    }
+
+    #[test]
+    fn draw_alerts_tab_with_active_alerts() {
+        let mut term = test_terminal(120, 30);
+        let mut app = App::new();
+        app.update(Event::AlertFired(firing_alert(
+            Severity::Critical,
+            "gnuc",
+            "high-cpu",
+        )));
+        app.update(Event::AlertFired(firing_alert(
+            Severity::Warn,
+            "nuc",
+            "high-mem",
+        )));
+        app.update(Event::AlertFired(firing_alert(
+            Severity::Info,
+            "kajiblet",
+            "low-disk",
+        )));
+        term.draw(|f| draw(f, &app)).unwrap();
+    }
+
+    #[test]
+    fn draw_alerts_tab_empty() {
+        let mut term = test_terminal(80, 24);
+        let mut app = App::new();
+        app.active_tab = Tab::Alerts;
+        term.draw(|f| draw(f, &app)).unwrap();
+    }
+
+    #[test]
+    fn draw_metrics_tab_with_data() {
+        let mut term = test_terminal(120, 30);
+        let mut app = App::new();
+        app.active_tab = Tab::Metrics;
+        app.update(Event::MetricsUpdate(metrics_for("gnuc")));
+        app.update(Event::MetricsUpdate(metrics_for("nuc")));
+        term.draw(|f| draw(f, &app)).unwrap();
+    }
+
+    #[test]
+    fn draw_metrics_tab_empty() {
+        let mut term = test_terminal(80, 24);
+        let mut app = App::new();
+        app.active_tab = Tab::Metrics;
+        term.draw(|f| draw(f, &app)).unwrap();
+    }
+
+    #[test]
+    fn draw_metrics_tab_no_gpu() {
+        let mut term = test_terminal(80, 24);
+        let mut app = App::new();
+        app.active_tab = Tab::Metrics;
+        let mut m = MetricSet::new("gnuc");
+        m.insert("cpu.percent", 50.0);
+        m.insert("memory.percent", 60.0);
+        m.insert("disk.used_pct", 70.0);
+        // No gpu.util_pct — should not crash
+        app.update(Event::MetricsUpdate(m));
+        term.draw(|f| draw(f, &app)).unwrap();
+    }
+
+    #[test]
+    fn draw_history_tab_with_resolved() {
+        let mut term = test_terminal(80, 24);
+        let mut app = App::new();
+        app.active_tab = Tab::History;
+        app.update(Event::AlertFired(firing_alert(
+            Severity::Warn,
+            "gnuc",
+            "r1",
+        )));
+        app.update(Event::AlertResolved(resolved_alert()));
+        term.draw(|f| draw(f, &app)).unwrap();
+    }
+
+    #[test]
+    fn draw_history_tab_empty() {
+        let mut term = test_terminal(80, 24);
+        let mut app = App::new();
+        app.active_tab = Tab::History;
+        term.draw(|f| draw(f, &app)).unwrap();
+    }
+
+    #[test]
+    fn draw_rules_tab() {
+        let mut term = test_terminal(80, 24);
+        let mut app = App::new();
+        app.active_tab = Tab::Rules;
+        term.draw(|f| draw(f, &app)).unwrap();
+    }
+
+    #[test]
+    fn draw_daemon_disconnected_state() {
+        let mut term = test_terminal(80, 24);
+        let mut app = App::new();
+        app.update(Event::DaemonDisconnected("timeout".into()));
+        term.draw(|f| draw(f, &app)).unwrap();
+    }
+
+    #[test]
+    fn draw_daemon_connected_state() {
+        let mut term = test_terminal(80, 24);
+        let mut app = App::new();
+        app.update(Event::DaemonConnected);
+        term.draw(|f| draw(f, &app)).unwrap();
+    }
+
+    #[test]
+    fn draw_all_severity_levels_in_alerts() {
+        let mut term = test_terminal(120, 30);
+        let mut app = App::new();
+        for sev in [Severity::Info, Severity::Warn, Severity::Critical] {
+            app.update(Event::AlertFired(firing_alert(
+                sev,
+                "gnuc",
+                &format!("rule-{sev}"),
+            )));
+        }
+        term.draw(|f| draw(f, &app)).unwrap();
+    }
+
+    #[test]
+    fn draw_scrolled_metrics() {
+        let mut term = test_terminal(80, 24);
+        let mut app = App::new();
+        app.active_tab = Tab::Metrics;
+        app.scroll_offset = 5;
+        for i in 0..10 {
+            app.update(Event::MetricsUpdate(metrics_for(&format!("host-{i}"))));
+        }
+        term.draw(|f| draw(f, &app)).unwrap();
+    }
+
+    #[test]
+    fn draw_tab_badge_shows_alert_count() {
+        let mut term = test_terminal(80, 24);
+        let mut app = App::new();
+        app.update(Event::AlertFired(firing_alert(
+            Severity::Critical,
+            "gnuc",
+            "cpu",
+        )));
+        assert_eq!(app.active_alert_count, 1);
+        term.draw(|f| draw(f, &app)).unwrap();
+    }
+}
