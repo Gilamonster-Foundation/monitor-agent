@@ -1,0 +1,30 @@
+[package]
+name = "monitor-alert"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Alert dispatchers for monitor-agent (terminal bell, voice, webhook, NATS)"
+
+[dependencies]
+monitor-core.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+reqwest.workspace = true
+async-nats.workspace = true
+
+[dev-dependencies]
+tokio-test.workspace = true
+wiremock.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

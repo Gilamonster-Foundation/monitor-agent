@@ -1,0 +1,30 @@
+#!/bin/bash
+#
+# Pre-push hook for monitor-agent
+#
+# Runs the same lint + test gates that CI runs, locally, before any push
+# reaches origin. If this passes, CI should pass too.
+#
+# Install: `just install-hooks`
+#
+# PIPELINE PARITY: This hook mirrors .github/workflows/ci.yml.
+#   `just check` matches the lint + test jobs (fmt + clippy + cargo test)
+# When editing this hook, update the workflow to match.
+# When editing the workflow, update this hook to match.
+#
+# Do NOT skip this hook with `--no-verify`. Fix the issue instead.
+
+set -e
+
+cd "$(git rev-parse --show-toplevel)"
+
+if ! command -v just >/dev/null 2>&1; then
+    echo "pre-push: 'just' not found in PATH"
+    echo "          install via: cargo install just"
+    exit 1
+fi
+
+echo "[pre-push] running just check..."
+just check
+
+echo "[pre-push] OK"

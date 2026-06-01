@@ -1,0 +1,84 @@
+[workspace]
+resolver = "2"
+members = [
+    "monitor-core",
+    "monitor-collect",
+    "monitor-alert",
+    "monitor-tui",
+    "monitor-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "Apache-2.0"
+repository = "https://github.com/hartsock/monitor-agent"
+homepage = "https://github.com/hartsock/monitor-agent"
+authors = ["Shawn Hartsock <hartsock@users.noreply.github.com>"]
+
+[workspace.dependencies]
+# Core utilities
+anyhow = "1.0"
+thiserror = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+toml = "0.8"
+regex = "1"
+async-trait = "0.1"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+futures-core = "0.3"
+
+# System metrics
+sysinfo = "0.33"
+
+# HTTP (Prometheus client, webhooks)
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls-native-roots",
+    "json",
+] }
+
+# NATS
+async-nats = "0.37"
+
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+
+# TUI
+ratatui = "0.29"
+crossterm = { version = "0.28", features = ["event-stream"] }
+
+# Internal crates
+monitor-core    = { path = "monitor-core",    version = "=0.1.0" }
+monitor-collect = { path = "monitor-collect", version = "=0.1.0" }
+monitor-alert   = { path = "monitor-alert",   version = "=0.1.0" }
+monitor-tui     = { path = "monitor-tui",     version = "=0.1.0" }
+
+# Test utilities (dev-only)
+tempfile = "3"
+mockall = "0.13"
+tokio-test = "0.4"
+wiremock = "0.6"
+
+[workspace.lints.clippy]
+explicit_iter_loop            = "warn"
+flat_map_option               = "warn"
+implicit_clone                = "warn"
+needless_for_each             = "warn"
+semicolon_if_nothing_returned = "warn"
+uninlined_format_args         = "warn"
+useless_conversion            = "warn"
+use_self                      = "warn"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

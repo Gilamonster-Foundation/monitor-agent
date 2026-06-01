@@ -1,0 +1,32 @@
+[package]
+name = "monitor-collect"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Metric collectors for monitor-agent (local, prometheus, nats, ssh)"
+
+[dependencies]
+monitor-core.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+reqwest.workspace = true
+async-nats.workspace = true
+tokio-stream.workspace = true
+sysinfo.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio-test.workspace = true
+wiremock.workspace = true
+
+[lints]
+workspace = true
