@@ -463,7 +463,10 @@ mod tests {
         std::env::set_var("XDG_RUNTIME_DIR", "/run/user/1000");
         let cfg = DaemonConfig { socket: None };
         let path = cfg.socket_path();
-        assert_eq!(path.to_str().unwrap(), "/run/user/1000/monitor-agent.sock");
+        assert_eq!(
+            path,
+            std::path::PathBuf::from("/run/user/1000").join("monitor-agent.sock")
+        );
         match orig {
             Some(v) => std::env::set_var("XDG_RUNTIME_DIR", v),
             None => std::env::remove_var("XDG_RUNTIME_DIR"),
