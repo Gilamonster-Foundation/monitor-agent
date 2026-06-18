@@ -1,0 +1,20 @@
+# caster station — agent commit identity.
+#
+# Overrides newt's compiled-in `newt-agent[bot]` default. This is the
+# documented descendant override mechanism:
+# `newt_core::agent_identity::AgentIdentity` resolves an `agent-identity.toml`
+# (workspace walk-up -> ~/.newt -> /etc/newt -> compiled default).
+#
+# Secrets are referenced by PATH / env, never inlined here. This file is
+# shipped now per the Phase 1 roadmap step; it is wired into the running
+# binary in a later phase, when the station consumes newt-core directly.
+
+name = "caster[bot]"
+email = "hartsock@users.noreply.github.com"
+
+# Optional: filesystem PATH to the station's signing key (the UserKey that
+# roots its object-capability identity). A PATH, never inline key material.
+# Left unset for the scaffold — the read-only operating key is minted from
+# ~/.caster/identity.pem at runtime (see src/identity.rs).
+#
+# signing_key = "~/.caster/identity.pem"

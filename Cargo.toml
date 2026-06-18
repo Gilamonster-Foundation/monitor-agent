@@ -6,6 +6,7 @@ members = [
     "monitor-alert",
     "monitor-tui",
     "monitor-cli",
+    "monitor-station",
 ]
 
 [workspace.package]

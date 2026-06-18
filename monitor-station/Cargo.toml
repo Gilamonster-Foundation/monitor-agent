@@ -1,0 +1,52 @@
+[package]
+name = "monitor-station"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "caster station — inherit-and-extend descendant of newt-agent (Phase 0/1 scaffold)"
+keywords = ["monitor", "caster", "ocap", "station"]
+
+[[bin]]
+name = "monitor-station"
+path = "src/main.rs"
+
+[lib]
+name = "monitor_station"
+path = "src/lib.rs"
+
+[features]
+default = []
+# Inherit newt-agent's object-capability identity layer.
+#
+# In this in-monitor-agent ("hybrid") phase we inherit at the
+# *agent-mesh-protocol* level — the published, pure-Rust (ed25519 + blake3)
+# crate that `newt-identity` itself wraps. Depending on `newt-identity`
+# directly would drag `newt-core` -> `agent-bridle` (a git-patched, unpublished
+# crate) + reqwest into the workspace, forcing the gila `[patch.crates-io]`
+# block and making even the default build fetch agent-bridle. Inheriting one
+# level lower keeps `cargo build --workspace` clean and offline-friendly. The
+# standalone-repo split (Model B) adopts `newt-identity` over a pinned git-dep,
+# like gilamonster-agent. See docs/decisions/0001-station-toolchain.md.
+newt = ["dep:agent-mesh-protocol", "dep:chrono"]
+# Reserved: authenticated farm transport via newt-mesh / agent-mesh (Phase 9).
+mesh = []
+# Reserved: embedded brush shell / agent-bridle confined tools (Phase 5).
+shell = []
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+# Inherited capability layer — OPTIONAL, behind `newt`. Pure Rust, resolvable
+# from crates.io; no newt-core / agent-bridle / reqwest drag.
+agent-mesh-protocol = { version = "0.6", optional = true }
+chrono = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
