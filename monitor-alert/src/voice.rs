@@ -37,33 +37,43 @@ impl VoiceEngine {
     }
 
     /// Detect the best available engine on this platform.
+    ///
+    /// Implemented as one body per target OS so each platform compiles
+    /// warning-clean under `-D warnings`: the Unix `which` probe and its
+    /// `Disabled` fallback are dead code on Windows, where detection always
+    /// resolves to PowerShell/SAPI.
+    #[cfg(target_os = "macos")]
     pub fn detect() -> Self {
-        #[cfg(target_os = "macos")]
-        {
-            if which("say") {
-                return Self::Say;
-            }
+        if which("say") {
+            return Self::Say;
         }
-        #[cfg(target_os = "windows")]
-        {
-            return Self::PowerShell;
+        Self::Disabled
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn detect() -> Self {
+        Self::PowerShell
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    pub fn detect() -> Self {
+        if which("piper") {
+            return Self::Piper;
         }
-        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-        {
-            if which("piper") {
-                return Self::Piper;
-            }
-            if which("espeak-ng") {
-                return Self::EspeakNg;
-            }
-            if which("spd-say") {
-                return Self::SpdSay;
-            }
+        if which("espeak-ng") {
+            return Self::EspeakNg;
+        }
+        if which("spd-say") {
+            return Self::SpdSay;
         }
         Self::Disabled
     }
 }
 
+/// Returns true if `cmd` is on `PATH`. Only used by the Unix/macOS detection
+/// paths — Windows detection never probes the filesystem, so this is gated
+/// out there to avoid a dead-code warning under `-D warnings`.
+#[cfg(not(target_os = "windows"))]
 fn which(cmd: &str) -> bool {
     std::process::Command::new("which")
         .arg(cmd)

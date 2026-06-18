@@ -457,6 +457,10 @@ mod tests {
         std::env::remove_var("MONITOR_CONFIG");
     }
 
+    // `XDG_RUNTIME_DIR` and the Unix-domain socket it points at are a
+    // Unix-only concept, and `PathBuf::join` uses `\` on Windows — so this
+    // exact-path assertion is only meaningful (and correct) on Unix.
+    #[cfg(unix)]
     #[test]
     fn daemon_config_socket_xdg_runtime() {
         let orig = std::env::var("XDG_RUNTIME_DIR").ok();
