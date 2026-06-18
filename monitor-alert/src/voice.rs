@@ -41,13 +41,17 @@ impl VoiceEngine {
         #[cfg(target_os = "macos")]
         {
             if which("say") {
-                return Self::Say;
+                Self::Say
+            } else {
+                Self::Disabled
             }
         }
+
         #[cfg(target_os = "windows")]
         {
-            return Self::PowerShell;
+            Self::PowerShell
         }
+
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         {
             if which("piper") {
@@ -59,11 +63,12 @@ impl VoiceEngine {
             if which("spd-say") {
                 return Self::SpdSay;
             }
+            Self::Disabled
         }
-        Self::Disabled
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn which(cmd: &str) -> bool {
     std::process::Command::new("which")
         .arg(cmd)
