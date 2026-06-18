@@ -40,6 +40,11 @@ impl Tab {
 /// Canonical application state — everything a skin renders, and nothing about
 /// *how* it is rendered. Holds only ecosystem-independent `monitor-core` types,
 /// so it is swarm-free and frontend-agnostic.
+///
+/// `Clone` is cheap-enough for a per-frame snapshot (a few KB of metrics /
+/// alerts / history); skins render from a snapshot rather than holding the
+/// shared lock (see [`SharedPresence`](crate::SharedPresence)).
+#[derive(Clone)]
 pub struct PresenceModel {
     pub active_tab: Tab,
     pub quit: bool,
