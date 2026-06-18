@@ -8,7 +8,7 @@ use monitor_core::{
     metrics::Collector,
     Config as MonitorConfig,
 };
-use monitor_tui::Event;
+use monitor_presence::DataEvent;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -93,8 +93,8 @@ async fn build_dispatchers(cfg: &MonitorConfig) -> Vec<Arc<dyn AlertDispatcher>>
 }
 
 /// Spawn background tasks that collect metrics, evaluate rules, and dispatch.
-/// Sends `Event`s to the TUI channel.
-pub async fn spawn_collectors(cfg: Config, tx: mpsc::Sender<Event>) -> anyhow::Result<()> {
+/// Sends `DataEvent`s to the TUI channel.
+pub async fn spawn_collectors(cfg: Config, tx: mpsc::Sender<DataEvent>) -> anyhow::Result<()> {
     let collectors = build_collectors(&cfg).await?;
     let rules = cfg.alert_rules();
     let dispatchers = build_dispatchers(&cfg).await;
@@ -105,14 +105,14 @@ pub async fn spawn_collectors(cfg: Config, tx: mpsc::Sender<Event>) -> anyhow::R
         let mut interval = tokio::time::interval(Duration::from_secs(1));
         loop {
             interval.tick().await;
-            if tick_tx.send(Event::Tick).await.is_err() {
+            if tick_tx.send(DataEvent::Tick).await.is_err() {
                 break;
             }
         }
     });
 
     // Signal daemon is running (in-process mode).
-    let _ = tx.send(Event::DaemonConnected).await;
+    let _ = tx.send(DataEvent::DaemonConnected).await;
 
     // Collector / alert-engine task.
     tokio::spawn(async move {
@@ -127,7 +127,7 @@ pub async fn spawn_collectors(cfg: Config, tx: mpsc::Sender<Event>) -> anyhow::R
                 match collector.collect().await {
                     Ok(metrics) => {
                         // Send raw metrics to TUI.
-                        let _ = tx.send(Event::MetricsUpdate(metrics.clone())).await;
+                        let _ = tx.send(DataEvent::MetricsUpdate(metrics.clone())).await;
 
                         // Evaluate alert rules.
                         let transitions = engine.evaluate(&metrics);
@@ -139,7 +139,7 @@ pub async fn spawn_collectors(cfg: Config, tx: mpsc::Sender<Event>) -> anyhow::R
                                         tracing::warn!("dispatcher '{}' fire error: {e}", d.name());
                                     }
                                 }
-                                let _ = tx.send(Event::AlertFired(alert)).await;
+                                let _ = tx.send(DataEvent::AlertFired(alert)).await;
                             } else if alert.is_resolved() {
                                 for d in &dispatchers {
                                     if let Err(e) = d.resolve(&alert).await {
@@ -149,7 +149,7 @@ pub async fn spawn_collectors(cfg: Config, tx: mpsc::Sender<Event>) -> anyhow::R
                                         );
                                     }
                                 }
-                                let _ = tx.send(Event::AlertResolved(alert)).await;
+                                let _ = tx.send(DataEvent::AlertResolved(alert)).await;
                             }
                         }
                     }
@@ -168,16 +168,16 @@ pub async fn spawn_collectors(cfg: Config, tx: mpsc::Sender<Event>) -> anyhow::R
 pub async fn run_daemon(cfg: Config) -> anyhow::Result<()> {
     tracing::info!("monitor-agent daemon starting");
 
-    let (tx, mut rx) = mpsc::channel::<Event>(256);
+    let (tx, mut rx) = mpsc::channel::<DataEvent>(256);
     spawn_collectors(cfg, tx).await?;
 
     // Drain events — the daemon doesn't need to render them, just keep running.
     while let Some(event) = rx.recv().await {
         match event {
-            Event::AlertFired(ref a) => {
+            DataEvent::AlertFired(ref a) => {
                 tracing::info!("ALERT FIRING: {}", a.message);
             }
-            Event::AlertResolved(ref a) => {
+            DataEvent::AlertResolved(ref a) => {
                 tracing::info!("ALERT RESOLVED: {}", a.message);
             }
             _ => {}
@@ -310,13 +310,11 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_collectors_local_sends_connected_event() {
-        use monitor_tui::Event;
-        use tokio::sync::mpsc;
-        let (tx, mut rx) = mpsc::channel::<Event>(16);
+        let (tx, mut rx) = mpsc::channel::<DataEvent>(16);
         let cfg = local_only_config();
         spawn_collectors(cfg, tx).await.unwrap();
-        // The DaemonConnected event is sent synchronously before the async poll task starts.
+        // DaemonConnected is sent synchronously before the async poll task starts.
         let event = rx.recv().await.unwrap();
-        assert!(matches!(event, Event::DaemonConnected));
+        assert!(matches!(event, DataEvent::DaemonConnected));
     }
 }

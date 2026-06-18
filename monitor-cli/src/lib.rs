@@ -51,11 +51,11 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
 }
 
 async fn run_tui(cfg: monitor_core::Config) -> anyhow::Result<()> {
-    use monitor_tui::Event;
+    use monitor_presence::DataEvent;
     use tokio::sync::mpsc;
 
     let splash_timeout = cfg.tui.splash_timeout_secs;
-    let (tx, rx) = mpsc::channel::<Event>(256);
+    let (tx, rx) = mpsc::channel::<DataEvent>(256);
 
     daemon::spawn_collectors(cfg, tx).await?;
 

@@ -1,10 +1,10 @@
-pub mod ansi;
-mod app;
-mod event;
-mod ui;
+//! `monitor-tui` — the ratatui *skin* over the shared [`monitor_presence`]
+//! core. It owns terminal lifecycle, the splash, rendering, and crossterm
+//! input translation; the canonical state lives in [`monitor_presence`].
 
-pub use app::{App, ChatMessage, Mode, Tab};
-pub use event::Event;
+pub mod ansi;
+mod skin;
+mod ui;
 
 use anyhow::Context;
 use crossterm::{
@@ -17,7 +17,9 @@ use crossterm::{
         {disable_raw_mode, enable_raw_mode},
     },
 };
+use monitor_presence::{DataEvent, MontyPresence};
 use ratatui::{backend::CrosstermBackend, Terminal};
+use skin::TuiViewState;
 use std::io::{self, Write};
 use tokio::sync::mpsc;
 
@@ -203,9 +205,11 @@ fn show_ansi_splash(timeout_secs: u64) -> anyhow::Result<bool> {
 /// Run the TUI in-process (standalone mode — no daemon required).
 ///
 /// `splash_timeout_secs`: passed to the splash screen (0 = wait forever).
-/// Accepts an `mpsc::Receiver<Event>` fed by the daemon's data pipeline.
+/// Accepts an `mpsc::Receiver<DataEvent>` fed by the daemon's data pipeline.
+/// This is one *skin*: it renders the shared [`MontyPresence`] and feeds
+/// frontend-neutral intents into it. The canonical state lives in the presence.
 pub async fn run(
-    mut data_rx: mpsc::Receiver<Event>,
+    mut data_rx: mpsc::Receiver<DataEvent>,
     splash_timeout_secs: u64,
 ) -> anyhow::Result<()> {
     let cont = tokio::task::block_in_place(move || show_ansi_splash(splash_timeout_secs))?;
@@ -219,22 +223,25 @@ pub async fn run(
 
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend).context("create terminal")?;
-    let mut app = App::new();
+    let mut presence = MontyPresence::new();
+    let mut view = TuiViewState::new();
     let mut key_stream = crossterm::event::EventStream::new();
 
     loop {
-        terminal.draw(|frame| ui::draw(frame, &app))?;
+        terminal.draw(|frame| ui::draw(frame, presence.model(), &view))?;
 
         tokio::select! {
             Some(event) = data_rx.recv() => {
-                app.update(event);
-                if app.quit { break; }
+                presence.apply(event);
+                if presence.should_quit() { break; }
             }
             Some(Ok(ce)) = tokio_stream::StreamExt::next(&mut key_stream) => {
                 if let CtEvent::Key(key) = ce {
-                    app.update(Event::Key(key));
+                    if let Some(intent) = skin::translate_key(&mut view, key) {
+                        presence.submit_intent(intent);
+                    }
                 }
-                if app.quit { break; }
+                if presence.should_quit() { break; }
             }
         }
     }
