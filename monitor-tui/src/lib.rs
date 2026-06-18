@@ -3,6 +3,7 @@
 //! input translation; the canonical state lives in [`monitor_presence`].
 
 pub mod ansi;
+mod sink;
 mod skin;
 mod ui;
 
@@ -17,7 +18,7 @@ use crossterm::{
         {disable_raw_mode, enable_raw_mode},
     },
 };
-use monitor_presence::{DataEvent, MontyPresence};
+use monitor_presence::{AttachRole, DataEvent, MontyPresence};
 use ratatui::{backend::CrosstermBackend, Terminal};
 use skin::TuiViewState;
 use std::io::{self, Write};
@@ -227,6 +228,13 @@ pub async fn run(
     let mut view = TuiViewState::new();
     let mut key_stream = crossterm::event::EventStream::new();
 
+    // Attach this skin as an Observer of the session fan-out. Agent output
+    // (from the Monty mind, a later phase) is delivered to `sink`, forwarded
+    // over `transcript_rx`, and folded into the transcript here. A second
+    // (egui) skin attaches its own sink the same way — one turn, every skin.
+    let (sink, mut transcript_rx) = sink::RatatuiSink::new();
+    presence.attach_sink(AttachRole::Observer, Box::new(sink));
+
     loop {
         terminal.draw(|frame| ui::draw(frame, presence.model(), &view))?;
 
@@ -242,6 +250,9 @@ pub async fn run(
                     }
                 }
                 if presence.should_quit() { break; }
+            }
+            Some(chunk) = transcript_rx.recv() => {
+                presence.fold_output(&chunk);
             }
         }
     }
