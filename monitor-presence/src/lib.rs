@@ -12,8 +12,10 @@ mod event;
 mod intent;
 mod model;
 mod presence;
+pub mod session;
 
 pub use event::DataEvent;
 pub use intent::Intent;
 pub use model::{ChatMessage, PresenceModel, Tab};
 pub use presence::MontyPresence;
+pub use session::{AttachId, AttachRole, OutputChunk, OutputSink, OutputStream, SessionState};
