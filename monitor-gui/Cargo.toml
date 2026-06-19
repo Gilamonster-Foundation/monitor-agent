@@ -1,0 +1,20 @@
+[package]
+name = "monitor-gui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "egui GUI skin for monitor-agent — the caster station's premium surface"
+keywords = ["monitor", "egui", "gui", "dashboard"]
+
+[dependencies]
+monitor-core.workspace = true
+monitor-presence.workspace = true
+tokio.workspace = true
+eframe = "0.29"
+
+[lints]
+workspace = true
