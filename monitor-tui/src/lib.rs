@@ -18,7 +18,7 @@ use crossterm::{
         {disable_raw_mode, enable_raw_mode},
     },
 };
-use monitor_presence::{AttachRole, DataEvent, MontyPresence};
+use monitor_presence::{AttachRole, DataEvent, SharedPresence};
 use ratatui::{backend::CrosstermBackend, Terminal};
 use skin::TuiViewState;
 use std::io::{self, Write};
@@ -224,7 +224,9 @@ pub async fn run(
 
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend).context("create terminal")?;
-    let mut presence = MontyPresence::new();
+    // One shared presence: the collector feed and this skin both touch it
+    // through `SharedPresence` (a second egui skin will share the same handle).
+    let shared = SharedPresence::new();
     let mut view = TuiViewState::new();
     let mut key_stream = crossterm::event::EventStream::new();
 
@@ -233,26 +235,28 @@ pub async fn run(
     // over `transcript_rx`, and folded into the transcript here. A second
     // (egui) skin attaches its own sink the same way — one turn, every skin.
     let (sink, mut transcript_rx) = sink::RatatuiSink::new();
-    presence.attach_sink(AttachRole::Observer, Box::new(sink));
+    shared.with_mut(|p| p.attach_sink(AttachRole::Observer, Box::new(sink)));
 
     loop {
-        terminal.draw(|frame| ui::draw(frame, presence.model(), &view))?;
+        // Render from a cheap snapshot — never hold the shared lock across draw.
+        let snapshot = shared.snapshot();
+        terminal.draw(|frame| ui::draw(frame, &snapshot, &view))?;
 
         tokio::select! {
             Some(event) = data_rx.recv() => {
-                presence.apply(event);
-                if presence.should_quit() { break; }
+                shared.apply(event);
+                if shared.should_quit() { break; }
             }
             Some(Ok(ce)) = tokio_stream::StreamExt::next(&mut key_stream) => {
                 if let CtEvent::Key(key) = ce {
                     if let Some(intent) = skin::translate_key(&mut view, key) {
-                        presence.submit_intent(intent);
+                        shared.submit_intent(intent);
                     }
                 }
-                if presence.should_quit() { break; }
+                if shared.should_quit() { break; }
             }
             Some(chunk) = transcript_rx.recv() => {
-                presence.fold_output(&chunk);
+                shared.with_mut(|p| p.fold_output(&chunk));
             }
         }
     }
