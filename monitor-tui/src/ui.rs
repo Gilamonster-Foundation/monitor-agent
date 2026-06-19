@@ -1,7 +1,8 @@
 use crate::ansi::ansi_to_text;
-use crate::app::{App, ChatMessage, Mode, Tab};
+use crate::skin::{Mode, TuiViewState};
 use crate::PORTRAIT;
 use monitor_core::alert::Severity;
+use monitor_presence::{ChatMessage, PresenceModel, Tab};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Position, Rect},
     style::{Color, Modifier, Style},
@@ -26,7 +27,9 @@ const PORTRAIT_MIN_WIDTH: u16 = 55;
 // Top-level draw
 // ---------------------------------------------------------------------------
 
-pub fn draw(frame: &mut Frame, app: &App) {
+/// Render one frame of the ratatui skin from the shared [`PresenceModel`] plus
+/// this skin's [`TuiViewState`].
+pub fn draw(frame: &mut Frame, model: &PresenceModel, view: &TuiViewState) {
     let area = frame.area();
     let show_portrait = area.width >= PORTRAIT_MIN_WIDTH;
 
@@ -56,10 +59,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
     if show_portrait {
         draw_portrait(frame, header_split[0]);
     }
-    draw_speech_panel(frame, app, header_split[1]);
-    draw_tabs(frame, app, tabs_area);
-    draw_content(frame, app, content_area);
-    draw_status_bar(frame, app, status_area);
+    draw_speech_panel(frame, model, view, header_split[1]);
+    draw_tabs(frame, model, tabs_area);
+    draw_content(frame, model, view, content_area);
+    draw_status_bar(frame, model, view, status_area);
 }
 
 // ---------------------------------------------------------------------------
@@ -74,7 +77,7 @@ fn draw_portrait(frame: &mut Frame, area: Rect) {
 // Speech panel (right of portrait): status + commentary + chat log + input
 // ---------------------------------------------------------------------------
 
-fn draw_speech_panel(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_speech_panel(frame: &mut Frame, model: &PresenceModel, view: &TuiViewState, area: Rect) {
     // Vertical split inside the speech panel:
     //   [status 1] [commentary 3] [chat log fills] [input 1]
     let splits = Layout::default()
@@ -87,21 +90,21 @@ fn draw_speech_panel(frame: &mut Frame, app: &App, area: Rect) {
         ])
         .split(area);
 
-    draw_speech_status(frame, app, splits[0]);
-    draw_commentary(frame, app, splits[1]);
-    draw_chat_log(frame, app, splits[2]);
-    draw_chat_input(frame, app, splits[3]);
+    draw_speech_status(frame, model, splits[0]);
+    draw_commentary(frame, model, splits[1]);
+    draw_chat_log(frame, model, splits[2]);
+    draw_chat_input(frame, view, splits[3]);
 }
 
-fn draw_speech_status(frame: &mut Frame, app: &App, area: Rect) {
-    let conn = if app.daemon_connected {
+fn draw_speech_status(frame: &mut Frame, model: &PresenceModel, area: Rect) {
+    let conn = if model.daemon_connected {
         Span::styled("● daemon:ok", Style::default().fg(Color::Green))
     } else {
         Span::styled("● daemon:…", Style::default().fg(Color::DarkGray))
     };
-    let alerts = if app.active_alert_count > 0 {
+    let alerts = if model.active_alert_count > 0 {
         Span::styled(
-            format!("  ⚠ {}", app.active_alert_count),
+            format!("  ⚠ {}", model.active_alert_count),
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
@@ -110,20 +113,20 @@ fn draw_speech_status(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled("  ✓ ok", Style::default().fg(Color::Green))
     };
     let time = Span::styled(
-        format!("  {}", app.now),
+        format!("  {}", model.now),
         Style::default().fg(Color::DarkGray),
     );
     frame.render_widget(Paragraph::new(Line::from(vec![conn, alerts, time])), area);
 }
 
-fn draw_commentary(frame: &mut Frame, app: &App, area: Rect) {
-    let lines = monty_says(app);
+fn draw_commentary(frame: &mut Frame, model: &PresenceModel, area: Rect) {
+    let lines = monty_says(model);
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-fn monty_says(app: &App) -> Vec<Line<'static>> {
-    if app.active_alerts.is_empty() {
-        if app.metrics.is_empty() {
+fn monty_says(model: &PresenceModel) -> Vec<Line<'static>> {
+    if model.active_alerts.is_empty() {
+        if model.metrics.is_empty() {
             vec![Line::from(Span::styled(
                 "Watching... (no metrics yet)",
                 Style::default().fg(Color::DarkGray),
@@ -136,7 +139,7 @@ fn monty_says(app: &App) -> Vec<Line<'static>> {
         }
     } else {
         let mut lines = Vec::new();
-        for alert in app.active_alerts.iter().take(3) {
+        for alert in model.active_alerts.iter().take(3) {
             let color = match alert.severity {
                 Severity::Critical => Color::Red,
                 Severity::Warn => Color::Yellow,
@@ -152,9 +155,9 @@ fn monty_says(app: &App) -> Vec<Line<'static>> {
                 Span::styled(alert.message.clone(), Style::default().fg(color)),
             ]));
         }
-        if app.active_alert_count > 3 {
+        if model.active_alert_count > 3 {
             lines.push(Line::from(Span::styled(
-                format!("  … and {} more", app.active_alert_count - 3),
+                format!("  … and {} more", model.active_alert_count - 3),
                 Style::default().fg(Color::DarkGray),
             )));
         }
@@ -162,12 +165,12 @@ fn monty_says(app: &App) -> Vec<Line<'static>> {
     }
 }
 
-fn draw_chat_log(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_chat_log(frame: &mut Frame, model: &PresenceModel, area: Rect) {
     if area.height == 0 {
         return;
     }
     let n = area.height as usize;
-    let recent = app.recent_chat(n);
+    let recent = model.recent_chat(n);
     let lines: Vec<Line> = recent.iter().map(|msg| chat_line(msg)).collect();
     frame.render_widget(Paragraph::new(lines), area);
 }
@@ -187,18 +190,18 @@ fn chat_line(msg: &ChatMessage) -> Line<'static> {
     ])
 }
 
-fn draw_chat_input(frame: &mut Frame, app: &App, area: Rect) {
-    let (prompt, style) = match app.mode {
+fn draw_chat_input(frame: &mut Frame, view: &TuiViewState, area: Rect) {
+    let (prompt, style) = match view.mode {
         Mode::Chat => (
-            format!("> {}", app.chat_input),
+            format!("> {}", view.chat_input),
             Style::default().fg(Color::Yellow),
         ),
         Mode::Normal => ("> / to chat".into(), Style::default().fg(Color::DarkGray)),
     };
     frame.render_widget(Paragraph::new(prompt.as_str()).style(style), area);
 
-    if app.mode == Mode::Chat {
-        let x = area.x + 2 + app.chat_input.len() as u16;
+    if view.mode == Mode::Chat {
+        let x = area.x + 2 + view.chat_input.len() as u16;
         frame.set_cursor_position(Position::new(
             x.min(area.x + area.width.saturating_sub(1)),
             area.y,
@@ -210,12 +213,12 @@ fn draw_chat_input(frame: &mut Frame, app: &App, area: Rect) {
 // Tabs
 // ---------------------------------------------------------------------------
 
-fn draw_tabs(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_tabs(frame: &mut Frame, model: &PresenceModel, area: Rect) {
     let titles: Vec<Line> = Tab::ALL
         .iter()
         .map(|t| {
-            let label = if *t == Tab::Alerts && app.active_alert_count > 0 {
-                format!("{} ⚠{}", t.label(), app.active_alert_count)
+            let label = if *t == Tab::Alerts && model.active_alert_count > 0 {
+                format!("{} ⚠{}", t.label(), model.active_alert_count)
             } else {
                 t.label().into()
             };
@@ -224,7 +227,7 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect) {
         .collect();
     let selected = Tab::ALL
         .iter()
-        .position(|t| *t == app.active_tab)
+        .position(|t| *t == model.active_tab)
         .unwrap_or(0);
     frame.render_widget(
         Tabs::new(titles)
@@ -244,17 +247,17 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect) {
 // Tab content
 // ---------------------------------------------------------------------------
 
-fn draw_content(frame: &mut Frame, app: &App, area: Rect) {
-    match app.active_tab {
-        Tab::Alerts => draw_alerts_tab(frame, app, area),
-        Tab::Metrics => draw_metrics_tab(frame, app, area),
-        Tab::History => draw_history_tab(frame, app, area),
+fn draw_content(frame: &mut Frame, model: &PresenceModel, view: &TuiViewState, area: Rect) {
+    match model.active_tab {
+        Tab::Alerts => draw_alerts_tab(frame, model, area),
+        Tab::Metrics => draw_metrics_tab(frame, model, view, area),
+        Tab::History => draw_history_tab(frame, model, area),
         Tab::Rules => draw_rules_tab(frame, area),
     }
 }
 
-fn draw_alerts_tab(frame: &mut Frame, app: &App, area: Rect) {
-    if app.active_alerts.is_empty() {
+fn draw_alerts_tab(frame: &mut Frame, model: &PresenceModel, area: Rect) {
+    if model.active_alerts.is_empty() {
         frame.render_widget(
             Paragraph::new("No active alerts.")
                 .block(Block::default().borders(Borders::ALL).title("Alerts"))
@@ -265,7 +268,7 @@ fn draw_alerts_tab(frame: &mut Frame, app: &App, area: Rect) {
     }
     let header = Row::new(vec!["Sev", "Target", "Metric", "Value", "Firing for"])
         .style(Style::default().add_modifier(Modifier::BOLD));
-    let rows: Vec<Row> = app
+    let rows: Vec<Row> = model
         .active_alerts
         .iter()
         .map(|a| {
@@ -309,8 +312,8 @@ fn draw_alerts_tab(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-fn draw_metrics_tab(frame: &mut Frame, app: &App, area: Rect) {
-    if app.metrics.is_empty() {
+fn draw_metrics_tab(frame: &mut Frame, model: &PresenceModel, view: &TuiViewState, area: Rect) {
+    if model.metrics.is_empty() {
         frame.render_widget(
             Paragraph::new("Waiting for first poll…")
                 .block(Block::default().borders(Borders::ALL).title("Metrics"))
@@ -320,7 +323,7 @@ fn draw_metrics_tab(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    let mut targets: Vec<&str> = app.metrics.keys().map(String::as_str).collect();
+    let mut targets: Vec<&str> = model.metrics.keys().map(String::as_str).collect();
     targets.sort();
 
     // Width for sparklines — at least 10, at most 20.
@@ -329,7 +332,7 @@ fn draw_metrics_tab(frame: &mut Frame, app: &App, area: Rect) {
     let lines: Vec<Line> = targets
         .iter()
         .map(|target| {
-            let m = &app.metrics[*target];
+            let m = &model.metrics[*target];
 
             let cpu = m
                 .get(&"cpu.percent".into())
@@ -344,8 +347,8 @@ fn draw_metrics_tab(frame: &mut Frame, app: &App, area: Rect) {
                 .map(|v| format!("{v:.0}%"))
                 .unwrap_or_else(|| "n/a".into());
 
-            let cpu_hist = app.history_for(target, "cpu.percent", spark_w);
-            let mem_hist = app.history_for(target, "memory.percent", spark_w);
+            let cpu_hist = model.history_for(target, "cpu.percent", spark_w);
+            let mem_hist = model.history_for(target, "memory.percent", spark_w);
 
             let cpu_spark = sparkline(&cpu_hist, spark_w);
             let mem_spark = sparkline(&mem_hist, spark_w);
@@ -356,7 +359,7 @@ fn draw_metrics_tab(frame: &mut Frame, app: &App, area: Rect) {
 
             let gpu_part: Vec<Span> = {
                 if let Some(g) = m.get(&"gpu.util_pct".into()) {
-                    let gpu_hist = app.history_for(target, "gpu.util_pct", spark_w);
+                    let gpu_hist = model.history_for(target, "gpu.util_pct", spark_w);
                     let gpu_spark = sparkline(&gpu_hist, spark_w);
                     vec![
                         Span::raw("  GPU "),
@@ -392,13 +395,13 @@ fn draw_metrics_tab(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(
         Paragraph::new(lines)
             .block(Block::default().borders(Borders::ALL).title("Metrics"))
-            .scroll((app.scroll_offset as u16, 0)),
+            .scroll((view.scroll_offset as u16, 0)),
         area,
     );
 }
 
-fn draw_history_tab(frame: &mut Frame, app: &App, area: Rect) {
-    if app.resolved_alerts.is_empty() {
+fn draw_history_tab(frame: &mut Frame, model: &PresenceModel, area: Rect) {
+    if model.resolved_alerts.is_empty() {
         frame.render_widget(
             Paragraph::new("No resolved alerts this session.")
                 .block(Block::default().borders(Borders::ALL).title("History"))
@@ -409,7 +412,7 @@ fn draw_history_tab(frame: &mut Frame, app: &App, area: Rect) {
     }
     let header = Row::new(vec!["Target", "Metric", "Resolved"])
         .style(Style::default().add_modifier(Modifier::BOLD));
-    let rows: Vec<Row> = app
+    let rows: Vec<Row> = model
         .resolved_alerts
         .iter()
         .map(|a| {
@@ -455,8 +458,8 @@ fn draw_rules_tab(frame: &mut Frame, area: Rect) {
 // Status bar
 // ---------------------------------------------------------------------------
 
-fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
-    let mode_tag = match app.mode {
+fn draw_status_bar(frame: &mut Frame, model: &PresenceModel, view: &TuiViewState, area: Rect) {
+    let mode_tag = match view.mode {
         Mode::Chat => Span::styled(
             " CHAT ",
             Style::default().fg(Color::Black).bg(Color::Yellow),
@@ -469,7 +472,7 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             mode_tag,
-            Span::raw(format!("  collectors:{}", app.metrics.len())),
+            Span::raw(format!("  collectors:{}", model.metrics.len())),
             Span::styled("  q:quit", Style::default().fg(Color::DarkGray)),
             Span::styled("  1-4:tabs", Style::default().fg(Color::DarkGray)),
             Span::styled("  ↑↓:scroll", Style::default().fg(Color::DarkGray)),
@@ -550,10 +553,9 @@ fn severity_color(s: Severity) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::App;
-    use crate::event::Event;
     use monitor_core::alert::{Alert, AlertId, AlertState, Severity};
     use monitor_core::metrics::{MetricPath, MetricSet};
+    use monitor_presence::{ChatMessage, DataEvent, PresenceModel, Tab};
     use ratatui::{backend::TestBackend, Terminal};
     use uuid::Uuid;
 
@@ -609,126 +611,141 @@ mod tests {
     }
 
     #[test]
-    fn draw_empty_app_does_not_panic() {
+    fn draw_empty_does_not_panic() {
         let mut term = test_terminal(80, 30);
-        let app = App::new();
-        term.draw(|f| draw(f, &app)).unwrap();
+        let model = PresenceModel::new();
+        let view = TuiViewState::new();
+        term.draw(|f| draw(f, &model, &view)).unwrap();
     }
 
     #[test]
     fn draw_narrow_hides_portrait() {
         let mut term = test_terminal(40, 30);
-        let app = App::new();
-        term.draw(|f| draw(f, &app)).unwrap();
+        let model = PresenceModel::new();
+        let view = TuiViewState::new();
+        term.draw(|f| draw(f, &model, &view)).unwrap();
     }
 
     #[test]
     fn draw_wide_terminal() {
         let mut term = test_terminal(200, 50);
-        let app = App::new();
-        term.draw(|f| draw(f, &app)).unwrap();
+        let model = PresenceModel::new();
+        let view = TuiViewState::new();
+        term.draw(|f| draw(f, &model, &view)).unwrap();
     }
 
     #[test]
     fn draw_with_active_alerts() {
         let mut term = test_terminal(120, 40);
-        let mut app = App::new();
-        app.active_tab = Tab::Alerts; // exercise the Alerts tab content
-        app.update(Event::AlertFired(firing_alert(
+        let mut model = PresenceModel::new();
+        model.active_tab = Tab::Alerts; // exercise the Alerts tab content
+        model.apply(DataEvent::AlertFired(firing_alert(
             Severity::Critical,
             "gnuc",
             "cpu",
         )));
-        app.update(Event::AlertFired(firing_alert(
+        model.apply(DataEvent::AlertFired(firing_alert(
             Severity::Warn,
             "nuc",
             "mem",
         )));
-        app.update(Event::AlertFired(firing_alert(
+        model.apply(DataEvent::AlertFired(firing_alert(
             Severity::Info,
             "kajiblet",
             "dsk",
         )));
-        app.update(Event::AlertFired(firing_alert(
+        model.apply(DataEvent::AlertFired(firing_alert(
             Severity::Critical,
             "gnuc",
             "cpu2",
         )));
-        term.draw(|f| draw(f, &app)).unwrap();
+        let view = TuiViewState::new();
+        term.draw(|f| draw(f, &model, &view)).unwrap();
     }
 
     #[test]
     fn draw_metrics_tab_with_history() {
         let mut term = test_terminal(120, 40);
-        let mut app = App::new();
-        app.active_tab = Tab::Metrics;
+        let mut model = PresenceModel::new();
+        model.active_tab = Tab::Metrics;
         for i in 0..20 {
             let mut m = metrics_for("gnuc");
             m.insert("cpu.percent", i as f64 * 4.0);
-            app.update(Event::MetricsUpdate(m));
+            model.apply(DataEvent::MetricsUpdate(m));
         }
-        term.draw(|f| draw(f, &app)).unwrap();
+        let view = TuiViewState::new();
+        term.draw(|f| draw(f, &model, &view)).unwrap();
     }
 
     #[test]
     fn draw_metrics_tab_empty() {
         let mut term = test_terminal(80, 30);
-        let mut app = App::new();
-        app.active_tab = Tab::Metrics;
-        term.draw(|f| draw(f, &app)).unwrap();
+        let mut model = PresenceModel::new();
+        model.active_tab = Tab::Metrics;
+        let view = TuiViewState::new();
+        term.draw(|f| draw(f, &model, &view)).unwrap();
     }
 
     #[test]
     fn draw_history_tab() {
         let mut term = test_terminal(80, 30);
-        let mut app = App::new();
-        app.active_tab = Tab::History;
-        app.update(Event::AlertFired(firing_alert(Severity::Warn, "gnuc", "r")));
-        app.update(Event::AlertResolved(resolved_alert()));
-        term.draw(|f| draw(f, &app)).unwrap();
+        let mut model = PresenceModel::new();
+        model.active_tab = Tab::History;
+        model.apply(DataEvent::AlertFired(firing_alert(
+            Severity::Warn,
+            "gnuc",
+            "r",
+        )));
+        model.apply(DataEvent::AlertResolved(resolved_alert()));
+        let view = TuiViewState::new();
+        term.draw(|f| draw(f, &model, &view)).unwrap();
     }
 
     #[test]
     fn draw_history_tab_empty() {
         let mut term = test_terminal(80, 30);
-        let mut app = App::new();
-        app.active_tab = Tab::History;
-        term.draw(|f| draw(f, &app)).unwrap();
+        let mut model = PresenceModel::new();
+        model.active_tab = Tab::History;
+        let view = TuiViewState::new();
+        term.draw(|f| draw(f, &model, &view)).unwrap();
     }
 
     #[test]
     fn draw_rules_tab() {
         let mut term = test_terminal(80, 30);
-        let mut app = App::new();
-        app.active_tab = Tab::Rules;
-        term.draw(|f| draw(f, &app)).unwrap();
+        let mut model = PresenceModel::new();
+        model.active_tab = Tab::Rules;
+        let view = TuiViewState::new();
+        term.draw(|f| draw(f, &model, &view)).unwrap();
     }
 
     #[test]
     fn draw_chat_mode() {
         let mut term = test_terminal(80, 30);
-        let mut app = App::new();
-        app.mode = Mode::Chat;
-        app.chat_input = "hello".into();
-        app.chat_log.push(ChatMessage {
+        let mut model = PresenceModel::new();
+        let mut view = TuiViewState::new();
+        view.mode = Mode::Chat;
+        view.chat_input = "hello".into();
+        model.chat_log.push(ChatMessage {
             from: "you".into(),
             text: "status?".into(),
         });
-        app.chat_log.push(ChatMessage {
+        model.chat_log.push(ChatMessage {
             from: "monty".into(),
             text: "all clear.".into(),
         });
-        term.draw(|f| draw(f, &app)).unwrap();
+        term.draw(|f| draw(f, &model, &view)).unwrap();
     }
 
     #[test]
     fn draw_daemon_states() {
         let mut term = test_terminal(80, 30);
-        let mut app = App::new();
-        app.update(Event::DaemonConnected);
-        term.draw(|f| draw(f, &app)).unwrap();
-        app.update(Event::DaemonDisconnected("timeout".into()));
-        term.draw(|f| draw(f, &app)).unwrap();
+        let mut model = PresenceModel::new();
+        let view = TuiViewState::new();
+        model.apply(DataEvent::DaemonConnected);
+        term.draw(|f| draw(f, &model, &view)).unwrap();
+        model.apply(DataEvent::DaemonDisconnected("timeout".into()));
+        term.draw(|f| draw(f, &model, &view)).unwrap();
     }
 
     // Spark chart unit tests.
@@ -741,7 +758,6 @@ mod tests {
     fn sparkline_all_same_value_uses_lowest_bar() {
         let s = sparkline(&[50.0, 50.0, 50.0], 3);
         assert_eq!(s.chars().count(), 3);
-        // When min==max all bars are the same character.
         let chars: Vec<char> = s.chars().collect();
         assert!(chars.iter().all(|&c| c == chars[0]));
     }

@@ -1405,6 +1405,7 @@ dependencies = [
  "monitor-alert",
  "monitor-collect",
  "monitor-core",
+ "monitor-presence",
  "monitor-tui",
  "serde_json",
  "tempfile",
@@ -1475,6 +1476,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "monitor-presence"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "monitor-core",
+ "uuid",
+]
+
+[[package]]
 name = "monitor-station"
 version = "0.1.0"
 dependencies = [
@@ -1493,6 +1503,7 @@ dependencies = [
  "chrono",
  "crossterm",
  "monitor-core",
+ "monitor-presence",
  "ratatui",
  "serde",
  "serde_json",

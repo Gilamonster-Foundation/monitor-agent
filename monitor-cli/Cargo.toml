@@ -22,6 +22,7 @@ path = "src/lib.rs"
 monitor-core.workspace = true
 monitor-collect.workspace = true
 monitor-alert.workspace = true
+monitor-presence.workspace = true
 monitor-tui.workspace = true
 anyhow.workspace = true
 clap.workspace = true

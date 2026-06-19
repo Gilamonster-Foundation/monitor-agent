@@ -1,0 +1,21 @@
+[package]
+name = "monitor-presence"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Frontend-agnostic presence model (canonical state + intents) shared by monitor-agent's TUI and GUI skins"
+keywords = ["monitor", "tui", "presence", "state"]
+
+[dependencies]
+monitor-core.workspace = true
+chrono.workspace = true
+
+[dev-dependencies]
+uuid.workspace = true
+
+[lints]
+workspace = true
