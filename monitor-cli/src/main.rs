@@ -1,8 +1,9 @@
 use clap::Parser;
 use monitor_cli::Cli;
+#[cfg(feature = "gui")]
+use monitor_cli::Command;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
@@ -17,5 +18,13 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cli = Cli::parse();
-    monitor_cli::run(cli).await
+
+    // The GUI must own the main thread (eframe/winit); collectors run on a
+    // background tokio runtime. Every other command runs on the async path.
+    #[cfg(feature = "gui")]
+    if matches!(cli.command, Some(Command::Gui)) {
+        return monitor_cli::run_gui();
+    }
+
+    tokio::runtime::Runtime::new()?.block_on(monitor_cli::run(cli))
 }

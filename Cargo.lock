@@ -2695,6 +2695,7 @@ dependencies = [
  "monitor-alert",
  "monitor-collect",
  "monitor-core",
+ "monitor-gui",
  "monitor-presence",
  "monitor-tui",
  "serde_json",
