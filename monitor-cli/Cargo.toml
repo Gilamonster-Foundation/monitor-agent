@@ -18,12 +18,18 @@ path = "src/main.rs"
 name = "monitor_cli"
 path = "src/lib.rs"
 
+[features]
+default = []
+# The egui GUI surface. Optional so the default binary stays lean (no egui).
+gui = ["dep:monitor-gui"]
+
 [dependencies]
 monitor-core.workspace = true
 monitor-collect.workspace = true
 monitor-alert.workspace = true
 monitor-presence.workspace = true
 monitor-tui.workspace = true
+monitor-gui = { workspace = true, optional = true }
 anyhow.workspace = true
 clap.workspace = true
 serde_json.workspace = true

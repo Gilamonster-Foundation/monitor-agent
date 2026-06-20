@@ -32,6 +32,9 @@ pub enum Command {
     Doctor,
     /// Print the resolved configuration.
     Config,
+    /// Launch the egui GUI (caster station). Requires the `gui` build feature.
+    #[cfg(feature = "gui")]
+    Gui,
 }
 
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
@@ -47,6 +50,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             println!("{}", toml::to_string_pretty(&cfg)?);
             Ok(())
         }
+        // The GUI is dispatched from `main()` on the main thread (eframe/winit
+        // require it), before the async runtime — so it never reaches here.
+        #[cfg(feature = "gui")]
+        Command::Gui => anyhow::bail!("the `gui` command must be launched on the main thread"),
     }
 }
 
@@ -60,6 +67,42 @@ async fn run_tui(cfg: monitor_core::Config) -> anyhow::Result<()> {
     daemon::spawn_collectors(cfg, tx).await?;
 
     monitor_tui::run(rx, splash_timeout).await
+}
+
+/// Launch the egui GUI (caster station) on the calling (main) thread.
+///
+/// `eframe`/`winit` require the main thread, so this is dispatched from `main`
+/// *before* the async runtime — unlike every other command. Collectors run on a
+/// background tokio runtime whose data feed a pump task drains into the shared
+/// presence; the GUI reads snapshots of that presence each frame.
+///
+/// # Errors
+///
+/// Returns an error if config resolution, the runtime, the collectors, or the
+/// GUI window / graphics backend fail to start.
+#[cfg(feature = "gui")]
+pub fn run_gui() -> anyhow::Result<()> {
+    use monitor_presence::{DataEvent, SharedPresence};
+    use tokio::sync::mpsc;
+
+    let cfg = monitor_core::Config::resolve()?;
+    let rt = tokio::runtime::Runtime::new()?;
+    let shared = SharedPresence::new();
+
+    // Collector feed + a pump that drains data events into the shared presence.
+    let (tx, mut rx) = mpsc::channel::<DataEvent>(256);
+    rt.block_on(async { daemon::spawn_collectors(cfg, tx).await })?;
+    let pump = shared.clone();
+    rt.spawn(async move {
+        while let Some(ev) = rx.recv().await {
+            pump.apply(ev);
+        }
+    });
+
+    // eframe owns this (the main) thread; keep the runtime alive in scope so the
+    // collector + pump tasks keep feeding the shared presence while it runs.
+    let _guard = rt.enter();
+    monitor_gui::run(shared).map_err(|e| anyhow::anyhow!("gui failed: {e:?}"))
 }
 
 async fn print_status(cfg: monitor_core::Config) -> anyhow::Result<()> {

@@ -64,6 +64,7 @@ monitor-collect  = { path = "monitor-collect",  version = "=0.1.0" }
 monitor-alert    = { path = "monitor-alert",    version = "=0.1.0" }
 monitor-presence = { path = "monitor-presence", version = "=0.1.0" }
 monitor-tui      = { path = "monitor-tui",      version = "=0.1.0" }
+monitor-gui      = { path = "monitor-gui",      version = "=0.1.0" }
 
 # Test utilities (dev-only)
 tempfile = "3"
