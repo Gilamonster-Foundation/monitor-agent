@@ -25,8 +25,9 @@ use std::path::Path;
 use eframe::egui::{self, Color32, RichText};
 use egui_plot::{Line, Plot, PlotBounds, PlotPoints};
 use monitor_presence::{
-    AttachRole, Intent, OutputChunk, OutputSink, PresenceModel, SharedPresence,
+    AttachRole, DataEvent, Intent, OutputChunk, OutputSink, PresenceModel, SharedPresence,
 };
+use monitor_voice::{MicCapture, StubVoiceEngine, VoiceEngine};
 use tokio::sync::mpsc;
 
 /// Monty accent (the lizard green), reused for headings and the active tab.
@@ -95,8 +96,6 @@ impl GuiTab {
 enum MontyState {
     Sleeping,
     Idle,
-    /// Reserved: selected once a mic-open signal reaches the model.
-    #[allow(dead_code)]
     Listening,
     /// Reserved: selected once an agent-turn-in-progress signal reaches the model.
     #[allow(dead_code)]
@@ -120,6 +119,9 @@ impl MontyState {
     /// Derive the current mood from the snapshot. Listening/Thinking await voice
     /// + agent-turn signals on the model and aren't selected yet.
     fn from_model(m: &PresenceModel) -> Self {
+        if m.listening {
+            return Self::Listening;
+        }
         if !m.daemon_connected {
             return Self::Sleeping;
         }
@@ -275,6 +277,12 @@ pub struct EguiSkin {
     console: ShellConsole,
     /// Chat input buffer (egui-local) — submitted as `Intent::SubmitChat`.
     chat_input: String,
+    /// The (swappable) speech engine — a stub until native STT/TTS land.
+    voice: Box<dyn VoiceEngine>,
+    /// The live microphone, present only while push-to-talk is active.
+    mic: Option<MicCapture>,
+    /// Rolling RMS buffer published to the model for the voice waveform.
+    voice_rms: Vec<f32>,
 }
 
 impl EguiSkin {
@@ -289,6 +297,53 @@ impl EguiSkin {
             active_machine: 0,
             console: ShellConsole::new(),
             chat_input: String::new(),
+            voice: Box::new(StubVoiceEngine),
+            mic: None,
+            voice_rms: Vec::new(),
+        }
+    }
+
+    /// Push-to-talk: open the mic if idle, or stop it, transcribe the captured
+    /// audio, and submit the transcript as chat. (The stub engine returns
+    /// instantly; a real engine will transcribe on a background thread.)
+    fn toggle_listening(&mut self) {
+        if let Some(mic) = self.mic.take() {
+            let samples = mic.take_samples();
+            let sample_rate = mic.sample_rate();
+            drop(mic); // stop the stream
+            self.voice_rms.clear();
+            self.shared.apply(DataEvent::Listening(false));
+            let reply = match self.voice.transcribe(&samples, sample_rate) {
+                Ok(text) => text,
+                Err(e) => format!("[voice error: {e}]"),
+            };
+            self.shared.submit_intent(Intent::SubmitChat(reply));
+        } else {
+            match MicCapture::start() {
+                Ok(mic) => {
+                    self.mic = Some(mic);
+                    self.shared.apply(DataEvent::Listening(true));
+                }
+                Err(e) => self
+                    .shared
+                    .submit_intent(Intent::SubmitChat(format!("[mic error: {e}]"))),
+            }
+        }
+    }
+
+    /// Drain mic RMS into the rolling buffer and publish it for the waveform.
+    fn pump_voice(&mut self) {
+        if let Some(mic) = &self.mic {
+            let new = mic.drain_rms();
+            if !new.is_empty() {
+                self.voice_rms.extend(new);
+                let n = self.voice_rms.len();
+                if n > 64 {
+                    self.voice_rms.drain(0..n - 64);
+                }
+                self.shared
+                    .apply(DataEvent::VoiceLevels(self.voice_rms.clone()));
+            }
         }
     }
 
@@ -361,6 +416,18 @@ impl EguiSkin {
                                 });
                         });
                         ui.horizontal(|ui| {
+                            let listening = self.mic.is_some();
+                            let (talk, talk_col) = if listening {
+                                ("● stop", Color32::from_rgb(0xd9, 0x4f, 0x4f))
+                            } else {
+                                ("talk", ACCENT)
+                            };
+                            if ui
+                                .add(egui::Button::new(RichText::new(talk).color(talk_col)))
+                                .clicked()
+                            {
+                                self.toggle_listening();
+                            }
                             ui.label(RichText::new("›").strong().color(ACCENT));
                             let w = (ui.available_width() - 150.0).max(80.0);
                             let resp = ui.add(
@@ -368,7 +435,7 @@ impl EguiSkin {
                                     .hint_text("talk to Monty…")
                                     .desired_width(w),
                             );
-                            voice_waveform(ui);
+                            voice_waveform(ui, &model.voice_levels, model.listening);
                             if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                                 let text = std::mem::take(&mut self.chat_input);
                                 self.shared.submit_intent(Intent::SubmitChat(text));
@@ -762,25 +829,36 @@ fn first_history(model: &PresenceModel, machine: &str, keys: &[&str]) -> Vec<f64
     Vec::new()
 }
 
-/// An animated voice level-meter placeholder, driven by frame time. A future
-/// real audio feed (e.g. `Vec<f32>` RMS levels on the model) would replace the
-/// sine source here.
-fn voice_waveform(ui: &mut egui::Ui) {
+/// A voice level-meter. While listening it renders the live mic RMS `levels`
+/// (newest at the right); otherwise it idles with a gentle frame-time animation.
+fn voice_waveform(ui: &mut egui::Ui, levels: &[f32], listening: bool) {
     let time = ui.input(|i| i.time) as f32;
     let (resp, painter) = ui.allocate_painter(egui::vec2(140.0, 18.0), egui::Sense::hover());
     let rect = resp.rect;
-    let bars = 18;
+    let bars = 18usize;
     let bw = rect.width() / bars as f32;
+    let live = listening && !levels.is_empty();
+    let color = if live {
+        USER_CYAN
+    } else {
+        Color32::from_gray(80)
+    };
     for i in 0..bars {
-        let phase = time * 6.0 + i as f32 * 0.5;
-        let amp = (phase.sin() * 0.5 + 0.5) * 0.85 + 0.05;
+        let amp = if live {
+            // Map bar i to a recent level, newest on the right; boost for visibility.
+            let idx = levels.len().saturating_sub(bars - i);
+            (levels.get(idx).copied().unwrap_or(0.0) * 6.0).clamp(0.03, 1.0)
+        } else {
+            let phase = time * 6.0 + i as f32 * 0.5;
+            ((phase.sin() * 0.5 + 0.5) * 0.6 + 0.05).clamp(0.0, 1.0)
+        };
         let h = amp * rect.height();
         let x = rect.left() + (i as f32 + 0.5) * bw;
         let bar = egui::Rect::from_center_size(
             egui::pos2(x, rect.center().y),
             egui::vec2((bw * 0.6).max(1.0), h),
         );
-        painter.rect_filled(bar, egui::Rounding::same(1.0), USER_CYAN);
+        painter.rect_filled(bar, egui::Rounding::same(1.0), color);
     }
 }
 
@@ -810,6 +888,7 @@ impl eframe::App for EguiSkin {
         while let Ok(chunk) = self.transcript_rx.try_recv() {
             self.shared.with_mut(|p| p.fold_output(&chunk));
         }
+        self.pump_voice();
         // Tab hotkeys, but only when no text field has focus (so the Shell
         // console can type digits without switching tabs).
         if ctx.memory(|m| m.focused().is_none()) {

@@ -13,6 +13,7 @@ keywords = ["monitor", "egui", "gui", "dashboard"]
 [dependencies]
 monitor-core.workspace = true
 monitor-presence.workspace = true
+monitor-voice.workspace = true
 tokio.workspace = true
 eframe = "0.29"
 egui_plot = "0.29"

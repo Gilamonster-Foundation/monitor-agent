@@ -1,0 +1,19 @@
+[package]
+name = "monitor-voice"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Native voice for monitor-agent — a plumbing-first VoiceEngine seam + cpal mic capture"
+keywords = ["voice", "stt", "tts", "audio", "monitor"]
+
+[dependencies]
+anyhow.workspace = true
+tracing.workspace = true
+cpal = "0.15"
+
+[lints]
+workspace = true

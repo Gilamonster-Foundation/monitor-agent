@@ -23,4 +23,8 @@ pub enum DataEvent {
     DaemonDisconnected(String),
     /// Clock tick — refreshes the header timestamp.
     Tick,
+    /// Latest microphone RMS levels (newest last) for the voice waveform.
+    VoiceLevels(Vec<f32>),
+    /// Whether the microphone is open (drives Monty's listening state).
+    Listening(bool),
 }
