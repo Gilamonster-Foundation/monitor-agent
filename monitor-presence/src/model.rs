@@ -63,6 +63,10 @@ pub struct PresenceModel {
     pub chat_log: Vec<ChatMessage>,
     /// Rolling metric history: target → metric_path → last 60 values.
     pub metrics_history: HashMap<String, HashMap<String, VecDeque<f64>>>,
+    /// Recent microphone RMS levels (newest last) for the voice waveform.
+    pub voice_levels: Vec<f32>,
+    /// Whether the microphone is currently open (push-to-talk active).
+    pub listening: bool,
 }
 
 impl PresenceModel {
@@ -79,6 +83,8 @@ impl PresenceModel {
             active_alert_count: 0,
             chat_log: Vec::new(),
             metrics_history: HashMap::new(),
+            voice_levels: Vec::new(),
+            listening: false,
         }
     }
 
@@ -129,6 +135,15 @@ impl PresenceModel {
             }
             DataEvent::Tick => {
                 self.now = chrono::Local::now().format("%H:%M:%S").to_string();
+            }
+            DataEvent::VoiceLevels(levels) => {
+                self.voice_levels = levels;
+            }
+            DataEvent::Listening(on) => {
+                self.listening = on;
+                if !on {
+                    self.voice_levels.clear();
+                }
             }
         }
     }
