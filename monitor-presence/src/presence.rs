@@ -10,6 +10,32 @@
 use crate::session::{AttachId, AttachRole, OutputChunk, OutputSink, SessionState};
 use crate::{ChatMessage, DataEvent, Intent, PresenceModel, Tab};
 
+/// The chat "brain" seam. The active responder turns a user line into Monty's
+/// reply. [`StubResponder`] is the plumbing-first default; a real brain (an LLM,
+/// or gilabot's agent) swaps in via [`MontyPresence::set_responder`]. A
+/// streaming brain can instead drive the session fan-out and let chunks fold in.
+pub trait ChatResponder: Send {
+    /// Reply to `user_text` (may use live `model` context), or `None` to stay
+    /// silent. Must return promptly — a slow/real brain should stream via the
+    /// session rather than block here.
+    fn respond(&mut self, user_text: &str, model: &PresenceModel) -> Option<String>;
+}
+
+/// Plumbing-first placeholder: a canned, context-aware acknowledgement so the
+/// chat loop is visible end-to-end before a real brain is wired.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct StubResponder;
+
+impl ChatResponder for StubResponder {
+    fn respond(&mut self, user_text: &str, model: &PresenceModel) -> Option<String> {
+        Some(format!(
+            "(stub) heard \"{user_text}\" — watching {} host(s), {} active alert(s). A real brain wires in next.",
+            model.metrics.len(),
+            model.active_alert_count,
+        ))
+    }
+}
+
 /// The shared presence: canonical state, the frontend-neutral intent intake,
 /// and the session output fan-out. Skins read [`model`](Self::model), call
 /// [`submit_intent`](Self::submit_intent), and attach a sink via
@@ -17,6 +43,7 @@ use crate::{ChatMessage, DataEvent, Intent, PresenceModel, Tab};
 pub struct MontyPresence {
     model: PresenceModel,
     session: SessionState,
+    responder: Box<dyn ChatResponder>,
 }
 
 impl MontyPresence {
@@ -24,6 +51,7 @@ impl MontyPresence {
         Self {
             model: PresenceModel::new(),
             session: SessionState::default(),
+            responder: Box::new(StubResponder),
         }
     }
 
@@ -53,19 +81,31 @@ impl MontyPresence {
             }
             Intent::CycleTab(delta) => self.model.cycle_tab(delta),
             Intent::SubmitChat(text) => {
-                // Local-echo stub: the Monty mind attaches as the session
-                // Driver in a later phase and its reply streams back through
-                // the fan-out into the transcript via [`fold_output`].
                 let text = text.trim();
                 if !text.is_empty() {
                     self.model.chat_log.push(ChatMessage {
                         from: "you".into(),
                         text: text.to_owned(),
                     });
+                    // The current responder is the chat "brain". The stub
+                    // replies inline; a streaming brain will instead drive the
+                    // session and fold chunks in via [`fold_output`].
+                    if let Some(reply) = self.responder.respond(text, &self.model) {
+                        self.model.chat_log.push(ChatMessage {
+                            from: "monty".into(),
+                            text: reply,
+                        });
+                    }
                     self.model.chat_log.truncate(200);
                 }
             }
         }
+    }
+
+    /// Swap the chat brain. The plumbing-first default is [`StubResponder`];
+    /// a real brain (LLM / gilabot agent) replaces it here.
+    pub fn set_responder(&mut self, responder: Box<dyn ChatResponder>) {
+        self.responder = responder;
     }
 
     // --- session fan-out -----------------------------------------------------
@@ -156,12 +196,14 @@ mod tests {
     }
 
     #[test]
-    fn submit_chat_appends_user_line() {
+    fn submit_chat_appends_user_then_stub_reply() {
         let mut p = MontyPresence::new();
         p.submit_intent(Intent::SubmitChat("status?".into()));
-        assert_eq!(p.model().chat_log.len(), 1);
+        assert_eq!(p.model().chat_log.len(), 2);
         assert_eq!(p.model().chat_log[0].from, "you");
         assert_eq!(p.model().chat_log[0].text, "status?");
+        assert_eq!(p.model().chat_log[1].from, "monty");
+        assert!(!p.model().chat_log[1].text.is_empty());
     }
 
     #[test]
@@ -169,6 +211,22 @@ mod tests {
         let mut p = MontyPresence::new();
         p.submit_intent(Intent::SubmitChat("   ".into()));
         assert!(p.model().chat_log.is_empty());
+    }
+
+    #[test]
+    fn set_responder_swaps_the_brain() {
+        struct Silent;
+        impl ChatResponder for Silent {
+            fn respond(&mut self, _t: &str, _m: &PresenceModel) -> Option<String> {
+                None
+            }
+        }
+        let mut p = MontyPresence::new();
+        p.set_responder(Box::new(Silent));
+        p.submit_intent(Intent::SubmitChat("hi".into()));
+        // Only the user line — the silent brain adds no reply.
+        assert_eq!(p.model().chat_log.len(), 1);
+        assert_eq!(p.model().chat_log[0].from, "you");
     }
 
     #[test]

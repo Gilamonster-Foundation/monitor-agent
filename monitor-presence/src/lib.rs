@@ -18,6 +18,6 @@ mod shared;
 pub use event::DataEvent;
 pub use intent::Intent;
 pub use model::{ChatMessage, PresenceModel, Tab};
-pub use presence::MontyPresence;
+pub use presence::{ChatResponder, MontyPresence, StubResponder};
 pub use session::{AttachId, AttachRole, OutputChunk, OutputSink, OutputStream, SessionState};
 pub use shared::SharedPresence;

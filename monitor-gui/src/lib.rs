@@ -24,7 +24,9 @@ use std::path::Path;
 
 use eframe::egui::{self, Color32, RichText};
 use egui_plot::{Line, Plot, PlotBounds, PlotPoints};
-use monitor_presence::{AttachRole, OutputChunk, OutputSink, PresenceModel, SharedPresence};
+use monitor_presence::{
+    AttachRole, Intent, OutputChunk, OutputSink, PresenceModel, SharedPresence,
+};
 use tokio::sync::mpsc;
 
 /// Monty accent (the lizard green), reused for headings and the active tab.
@@ -271,6 +273,8 @@ pub struct EguiSkin {
     /// Per-skin view state: which machine sub-tab is selected on the Metrics tab.
     active_machine: usize,
     console: ShellConsole,
+    /// Chat input buffer (egui-local) — submitted as `Intent::SubmitChat`.
+    chat_input: String,
 }
 
 impl EguiSkin {
@@ -284,6 +288,7 @@ impl EguiSkin {
             active_tab: GuiTab::Metrics,
             active_machine: 0,
             console: ShellConsole::new(),
+            chat_input: String::new(),
         }
     }
 
@@ -301,8 +306,8 @@ impl EguiSkin {
         });
     }
 
-    /// Top panel: animated Monty (left, fixed) ∣ chat + voice waveform (right).
-    fn top_panel(&self, ctx: &egui::Context, model: &PresenceModel) {
+    /// Top panel: animated Monty (left, fixed) ∣ chat + input + voice waveform.
+    fn top_panel(&mut self, ctx: &egui::Context, model: &PresenceModel) {
         egui::TopBottomPanel::top("monty")
             .exact_height(160.0)
             .show(ctx, |ui| {
@@ -356,11 +361,19 @@ impl EguiSkin {
                                 });
                         });
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Chat: Enter to chat").color(Color32::GRAY));
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                voice_waveform,
+                            ui.label(RichText::new("›").strong().color(ACCENT));
+                            let w = (ui.available_width() - 150.0).max(80.0);
+                            let resp = ui.add(
+                                egui::TextEdit::singleline(&mut self.chat_input)
+                                    .hint_text("talk to Monty…")
+                                    .desired_width(w),
                             );
+                            voice_waveform(ui);
+                            if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                let text = std::mem::take(&mut self.chat_input);
+                                self.shared.submit_intent(Intent::SubmitChat(text));
+                                resp.request_focus();
+                            }
                         });
                     });
                 });
