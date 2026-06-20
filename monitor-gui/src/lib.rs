@@ -423,54 +423,56 @@ impl EguiSkin {
 
         ui.columns(2, |cols| {
             metric_box(&mut cols[0], "CPU", |ui| {
-                gauge(ui, pct("cpu.percent"));
-                sparkline(
+                spark_with_value(
                     ui,
                     "spark_cpu",
+                    pct("cpu.percent"),
                     &model.history_for(machine, "cpu.percent", 60),
                     ACCENT,
-                    Some(100.0),
                 );
             });
             metric_box(&mut cols[0], "NET", |ui| {
                 let rx = first_history(model, machine, &["net.rx_bytes_sec", "net.rx_bytes"]);
                 let tx = first_history(model, machine, &["net.tx_bytes_sec", "net.tx_bytes"]);
                 if rx.is_empty() && tx.is_empty() {
-                    ui.label(RichText::new("RX / TX history — waiting…").color(Color32::GRAY));
+                    ui.label(RichText::new("RX / TX — waiting…").color(Color32::GRAY));
                 } else {
-                    net_sparkline(ui, "spark_net", &rx, &tx);
+                    butterfly_net(ui, "spark_net", &rx, &tx);
                     ui.label(
-                        RichText::new("rx (green) · tx (cyan)")
+                        RichText::new("rx ▲ green · tx ▼ cyan")
                             .small()
                             .color(Color32::GRAY),
                     );
                 }
             });
             metric_box(&mut cols[1], "MEM", |ui| {
-                gauge(ui, pct("memory.percent"));
-                sparkline(
+                spark_with_value(
                     ui,
                     "spark_mem",
+                    pct("memory.percent"),
                     &model.history_for(machine, "memory.percent", 60),
                     USER_CYAN,
-                    Some(100.0),
                 );
+                ui.add_space(2.0);
                 ui.label(RichText::new("disk").small().color(Color32::GRAY));
-                gauge(ui, pct("disk.used_pct"));
+                spark_with_value(
+                    ui,
+                    "spark_disk",
+                    pct("disk.used_pct"),
+                    &model.history_for(machine, "disk.used_pct", 60),
+                    ACCENT,
+                );
             });
             metric_box(&mut cols[1], "GPU", |ui| match pct("gpu.util_pct") {
-                Some(_) => {
-                    gauge(ui, pct("gpu.util_pct"));
-                    sparkline(
-                        ui,
-                        "spark_gpu",
-                        &model.history_for(machine, "gpu.util_pct", 60),
-                        ACCENT,
-                        Some(100.0),
-                    );
-                }
+                Some(_) => spark_with_value(
+                    ui,
+                    "spark_gpu",
+                    pct("gpu.util_pct"),
+                    &model.history_for(machine, "gpu.util_pct", 60),
+                    ACCENT,
+                ),
                 None => {
-                    ui.label(RichText::new("util / VRAM / temp — stub").color(Color32::GRAY));
+                    ui.label(RichText::new("no GPU on this host").color(Color32::GRAY));
                 }
             });
         });
@@ -644,28 +646,31 @@ fn stub_box(ui: &mut egui::Ui, title: &str, body: &str) {
     });
 }
 
-/// A percentage gauge colored green/yellow/red. Renders `n/a` when absent.
-fn gauge(ui: &mut egui::Ui, value: Option<f64>) {
-    match value {
-        Some(v) => {
-            let frac = (v / 100.0).clamp(0.0, 1.0) as f32;
-            ui.add(
-                egui::ProgressBar::new(frac)
-                    .text(format!("{v:.0}%"))
-                    .fill(pct_color(v)),
-            );
-        }
-        None => {
-            ui.label(RichText::new("n/a").color(Color32::GRAY));
-        }
-    }
+/// Current value (latest sample) shown small + right-aligned, above a filled
+/// sparkline — the change-over-time view we prefer over a snapshot gauge.
+fn spark_with_value(
+    ui: &mut egui::Ui,
+    id: &str,
+    current: Option<f64>,
+    history: &[f64],
+    color: Color32,
+) {
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let (text, col) = match current {
+            Some(v) => (format!("{v:.0}%"), pct_color(v)),
+            None => ("—".to_owned(), Color32::GRAY),
+        };
+        ui.label(RichText::new(text).strong().color(col));
+    });
+    sparkline(ui, id, history, color, Some(100.0));
 }
 
-/// A compact, non-interactive line graph (sparkline) of `values`.
+/// A compact, non-interactive **filled** line graph (sparkline) of `values`.
 /// `fixed_max` clamps the y-axis (e.g. `Some(100.0)` for percentages); `None`
-/// auto-fits to the data range.
+/// auto-fits to the data range. Shows `waiting…` until history accumulates.
 fn sparkline(ui: &mut egui::Ui, id: &str, values: &[f64], color: Color32, fixed_max: Option<f64>) {
     if values.is_empty() {
+        ui.label(RichText::new("waiting…").small().color(Color32::GRAY));
         return;
     }
     let pts: PlotPoints = values
@@ -673,7 +678,7 @@ fn sparkline(ui: &mut egui::Ui, id: &str, values: &[f64], color: Color32, fixed_
         .enumerate()
         .map(|(i, &v)| [i as f64, v])
         .collect();
-    let line = Line::new(pts).color(color).width(1.5);
+    let line = Line::new(pts).color(color).width(1.5).fill(0.0);
     let xmax = (values.len() as f64 - 1.0).max(1.0);
     let (ymin, ymax) = match fixed_max {
         Some(m) => (0.0, m),
@@ -685,7 +690,7 @@ fn sparkline(ui: &mut egui::Ui, id: &str, values: &[f64], color: Color32, fixed_
         }
     };
     Plot::new(id)
-        .height(38.0)
+        .height(46.0)
         .allow_drag(false)
         .allow_zoom(false)
         .allow_scroll(false)
@@ -698,31 +703,28 @@ fn sparkline(ui: &mut egui::Ui, id: &str, values: &[f64], color: Color32, fixed_
         });
 }
 
-/// Two-line (rx/tx) auto-scaled sparkline for the NET block.
-fn net_sparkline(ui: &mut egui::Ui, id: &str, rx: &[f64], tx: &[f64]) {
-    let mut mn = f64::INFINITY;
-    let mut mx = f64::NEG_INFINITY;
-    for &v in rx.iter().chain(tx.iter()) {
-        mn = mn.min(v);
-        mx = mx.max(v);
-    }
-    if !mn.is_finite() {
-        return;
-    }
-    let pad = ((mx - mn).abs() * 0.1).max(1.0);
+/// A NET "butterfly": rx filled upward, tx filled downward, mirrored about a
+/// zero center line — change-over-time for both directions at a glance.
+fn butterfly_net(ui: &mut egui::Ui, id: &str, rx: &[f64], tx: &[f64]) {
+    let mx = rx
+        .iter()
+        .chain(tx.iter())
+        .copied()
+        .fold(0.0_f64, f64::max)
+        .max(1.0);
     let xmax = (rx.len().max(tx.len()) as f64 - 1.0).max(1.0);
-    let to_line = |data: &[f64], color: Color32| {
+    let wing = |data: &[f64], sign: f64, color: Color32| {
         let pts: PlotPoints = data
             .iter()
             .enumerate()
-            .map(|(i, &v)| [i as f64, v])
+            .map(|(i, &v)| [i as f64, sign * v])
             .collect();
-        Line::new(pts).color(color).width(1.2)
+        Line::new(pts).color(color).width(1.2).fill(0.0)
     };
-    let rx_line = to_line(rx, ACCENT);
-    let tx_line = to_line(tx, USER_CYAN);
+    let rx_line = wing(rx, 1.0, ACCENT);
+    let tx_line = wing(tx, -1.0, USER_CYAN);
     Plot::new(id)
-        .height(38.0)
+        .height(56.0)
         .allow_drag(false)
         .allow_zoom(false)
         .allow_scroll(false)
@@ -730,7 +732,7 @@ fn net_sparkline(ui: &mut egui::Ui, id: &str, rx: &[f64], tx: &[f64]) {
         .show_grid(false)
         .show_background(false)
         .show(ui, |pui| {
-            pui.set_plot_bounds(PlotBounds::from_min_max([0.0, mn - pad], [xmax, mx + pad]));
+            pui.set_plot_bounds(PlotBounds::from_min_max([0.0, -mx * 1.1], [xmax, mx * 1.1]));
             pui.line(rx_line);
             pui.line(tx_line);
         });
