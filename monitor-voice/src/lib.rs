@@ -97,6 +97,27 @@ impl MicCapture {
                 on_stream_error,
                 None,
             )?,
+            cpal::SampleFormat::U16 => device.build_input_stream(
+                &config,
+                move |data: &[u16], _: &_| {
+                    let f: Vec<f32> = data
+                        .iter()
+                        .map(|&s| (s as f32 / u16::MAX as f32) * 2.0 - 1.0)
+                        .collect();
+                    capture_chunk(&f, channels, &sink, &tx);
+                },
+                on_stream_error,
+                None,
+            )?,
+            cpal::SampleFormat::I32 => device.build_input_stream(
+                &config,
+                move |data: &[i32], _: &_| {
+                    let f: Vec<f32> = data.iter().map(|&s| s as f32 / i32::MAX as f32).collect();
+                    capture_chunk(&f, channels, &sink, &tx);
+                },
+                on_stream_error,
+                None,
+            )?,
             other => anyhow::bail!("unsupported input sample format: {other:?}"),
         };
         stream.play()?;
