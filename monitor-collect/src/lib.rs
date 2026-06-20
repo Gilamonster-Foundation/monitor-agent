@@ -5,5 +5,5 @@ pub mod ssh;
 
 pub use local::LocalCollector;
 pub use nats::NatsCollector;
-pub use prometheus::PrometheusCollector;
+pub use prometheus::{PrometheusCollector, PrometheusOptions};
 pub use ssh::SshCollector;

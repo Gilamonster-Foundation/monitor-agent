@@ -1,7 +1,9 @@
 use monitor_alert::{
     NatsPublishDispatcher, TerminalBellDispatcher, VoiceDispatcher, WebhookDispatcher,
 };
-use monitor_collect::{LocalCollector, NatsCollector, PrometheusCollector, SshCollector};
+use monitor_collect::{
+    LocalCollector, NatsCollector, PrometheusCollector, PrometheusOptions, SshCollector,
+};
 use monitor_core::{
     alert::{AlertDispatcher, AlertEngine},
     config::{Config, TargetKind},
@@ -26,7 +28,16 @@ pub async fn build_collectors(cfg: &MonitorConfig) -> anyhow::Result<Vec<Arc<dyn
                 let endpoint = target.endpoint.clone().ok_or_else(|| {
                     anyhow::anyhow!("prometheus target '{}' missing endpoint", target.name)
                 })?;
-                collectors.push(Arc::new(PrometheusCollector::new(&target.name, endpoint)));
+                let opts = PrometheusOptions {
+                    host_header: target.host_header.clone(),
+                    insecure_tls: target.insecure_tls,
+                    instance_matcher: target.instance_matcher.clone(),
+                };
+                collectors.push(Arc::new(PrometheusCollector::with_options(
+                    &target.name,
+                    endpoint,
+                    opts,
+                )));
             }
             TargetKind::Ssh => {
                 let host = target
