@@ -1,0 +1,48 @@
+# monitor-agent — pull live farm metrics from a Tailscale-fronted Prometheus.
+#
+# Why the extra fields: when caster is off the home LAN it reaches the lab only
+# over Tailscale, by IP, with no `home.lab` DNS — and the k3s ingress serves an
+# internal self-signed cert. So each prometheus target:
+#   * points `endpoint` at the ingress *tailnet IP*,
+#   * sets `host_header` so the ingress (Traefik) routes to Prometheus,
+#   * sets `insecure_tls` (the Tailscale tunnel already encrypts transport),
+#   * sets `instance_matcher` because the lab labels hosts with `instance_name`.
+#
+# Run:  MONITOR_CONFIG=docs/examples/prometheus-tailnet.toml \
+#         cargo run -p monitor-agent --features gui -- status   # (or: gui)
+
+[[targets]]
+name = "caster"
+kind = "local"
+
+[[targets]]
+name = "nuc"
+kind = "prometheus"
+endpoint = "https://100.95.47.17"          # tailnet IP of the lab ingress
+host_header = "prometheus.home.lab"
+insecure_tls = true
+instance_matcher = 'instance_name="nuc"'
+
+[[targets]]
+name = "nuc2"
+kind = "prometheus"
+endpoint = "https://100.95.47.17"
+host_header = "prometheus.home.lab"
+insecure_tls = true
+instance_matcher = 'instance_name="nuc2"'
+
+[[targets]]
+name = "geforcenuc"
+kind = "prometheus"
+endpoint = "https://100.95.47.17"
+host_header = "prometheus.home.lab"
+insecure_tls = true
+instance_matcher = 'instance_name="geforcenuc"'
+
+[[targets]]
+name = "dgx1"
+kind = "prometheus"
+endpoint = "https://100.95.47.17"
+host_header = "prometheus.home.lab"
+insecure_tls = true
+instance_matcher = 'instance_name="dgx1"'

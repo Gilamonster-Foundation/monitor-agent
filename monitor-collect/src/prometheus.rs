@@ -3,6 +3,19 @@ use monitor_core::metrics::{Collector, MetricSet};
 use serde::Deserialize;
 use std::collections::HashMap;
 
+/// Options for [`PrometheusCollector`], for endpoints behind a TLS ingress
+/// reached by IP (e.g. over Tailscale) and non-default series labeling.
+#[derive(Debug, Clone, Default)]
+pub struct PrometheusOptions {
+    /// HTTP `Host` header to send — route an ingress by IP, no DNS needed.
+    pub host_header: Option<String>,
+    /// Accept invalid/self-signed TLS certs (internal endpoint over a tunnel).
+    pub insecure_tls: bool,
+    /// Raw PromQL label matcher selecting this target's series, e.g.
+    /// `instance_name="nuc"`. Defaults to `instance=~"<name>.*"`.
+    pub instance_matcher: Option<String>,
+}
+
 /// Polls a Prometheus HTTP API for node_exporter metrics.
 ///
 /// Uses standard queries already used by gila-monitor-tui:
@@ -11,23 +24,51 @@ pub struct PrometheusCollector {
     target_name: String,
     endpoint: String,
     client: reqwest::Client,
+    host_header: Option<String>,
+    instance_matcher: Option<String>,
 }
 
 impl PrometheusCollector {
     pub fn new(target_name: impl Into<String>, endpoint: impl Into<String>) -> Self {
+        Self::with_options(target_name, endpoint, PrometheusOptions::default())
+    }
+
+    pub fn with_options(
+        target_name: impl Into<String>,
+        endpoint: impl Into<String>,
+        opts: PrometheusOptions,
+    ) -> Self {
+        let client = if opts.insecure_tls {
+            reqwest::Client::builder()
+                .danger_accept_invalid_certs(true)
+                .build()
+                .unwrap_or_default()
+        } else {
+            reqwest::Client::new()
+        };
         Self {
             target_name: target_name.into(),
             endpoint: endpoint.into().trim_end_matches('/').to_owned(),
-            client: reqwest::Client::new(),
+            client,
+            host_header: opts.host_header,
+            instance_matcher: opts.instance_matcher,
         }
+    }
+
+    /// The PromQL label matcher selecting this target's series.
+    fn selector(&self) -> String {
+        self.instance_matcher
+            .clone()
+            .unwrap_or_else(|| format!(r#"instance=~"{}.*""#, self.target_name))
     }
 
     async fn query(&self, promql: &str) -> anyhow::Result<Vec<PromSample>> {
         let url = format!("{}/api/v1/query", self.endpoint);
-        let resp: PromResponse = self
-            .client
-            .get(&url)
-            .query(&[("query", promql)])
+        let mut req = self.client.get(&url).query(&[("query", promql)]);
+        if let Some(ref host) = self.host_header {
+            req = req.header(reqwest::header::HOST, host);
+        }
+        let resp: PromResponse = req
             .send()
             .await
             .context("prometheus request failed")?
@@ -51,12 +92,12 @@ impl Collector for PrometheusCollector {
 
     async fn collect(&self) -> anyhow::Result<MetricSet> {
         let mut m = MetricSet::new(&self.target_name);
+        let sel = self.selector();
 
         // CPU utilization — 1 - idle rate averaged across all cores.
         if let Ok(samples) = self
             .query(&format!(
-                r#"100 - (avg by(instance) (rate(node_cpu_seconds_total{{mode="idle",instance=~"{target}.*"}}[2m])) * 100)"#,
-                target = self.target_name
+                r#"100 - (avg by(instance) (rate(node_cpu_seconds_total{{mode="idle",{sel}}}[2m])) * 100)"#
             ))
             .await
         {
@@ -70,8 +111,7 @@ impl Collector for PrometheusCollector {
         // Memory utilization.
         if let Ok(samples) = self
             .query(&format!(
-                r#"100 * (1 - node_memory_MemAvailable_bytes{{instance=~"{target}.*"}} / node_memory_MemTotal_bytes{{instance=~"{target}.*"}})"#,
-                target = self.target_name
+                r#"100 * (1 - node_memory_MemAvailable_bytes{{{sel}}} / node_memory_MemTotal_bytes{{{sel}}})"#
             ))
             .await
         {
@@ -85,8 +125,7 @@ impl Collector for PrometheusCollector {
         // Disk utilization — worst mount.
         if let Ok(samples) = self
             .query(&format!(
-                r#"max by(instance) (100 * (1 - node_filesystem_avail_bytes{{instance=~"{target}.*",fstype!~"tmpfs|overlay"}} / node_filesystem_size_bytes{{instance=~"{target}.*",fstype!~"tmpfs|overlay"}}))"#,
-                target = self.target_name
+                r#"max by(instance) (100 * (1 - node_filesystem_avail_bytes{{{sel},fstype!~"tmpfs|overlay"}} / node_filesystem_size_bytes{{{sel},fstype!~"tmpfs|overlay"}}))"#
             ))
             .await
         {
@@ -99,10 +138,7 @@ impl Collector for PrometheusCollector {
 
         // GPU utilization via DCGM exporter (optional).
         if let Ok(samples) = self
-            .query(&format!(
-                r#"DCGM_FI_DEV_GPU_UTIL{{instance=~"{target}.*"}}"#,
-                target = self.target_name
-            ))
+            .query(&format!(r#"DCGM_FI_DEV_GPU_UTIL{{{sel}}}"#))
             .await
         {
             if let Some(s) = samples.first() {
@@ -116,16 +152,12 @@ impl Collector for PrometheusCollector {
         for (metric_path, promql) in [
             (
                 "net.rx_bytes_sec",
-                format!(
-                    r#"sum by(instance)(rate(node_network_receive_bytes_total{{instance=~"{target}.*"}}[2m]))"#,
-                    target = self.target_name
-                ),
+                format!(r#"sum by(instance)(rate(node_network_receive_bytes_total{{{sel}}}[2m]))"#),
             ),
             (
                 "net.tx_bytes_sec",
                 format!(
-                    r#"sum by(instance)(rate(node_network_transmit_bytes_total{{instance=~"{target}.*"}}[2m]))"#,
-                    target = self.target_name
+                    r#"sum by(instance)(rate(node_network_transmit_bytes_total{{{sel}}}[2m]))"#
                 ),
             ),
         ] {
@@ -191,6 +223,26 @@ mod tests {
                 }]
             }
         })
+    }
+
+    #[test]
+    fn selector_defaults_to_instance_prefix() {
+        let c = PrometheusCollector::new("nuc", "http://x");
+        assert_eq!(c.selector(), r#"instance=~"nuc.*""#);
+    }
+
+    #[test]
+    fn selector_uses_custom_matcher_when_set() {
+        let c = PrometheusCollector::with_options(
+            "nuc",
+            "http://x",
+            PrometheusOptions {
+                instance_matcher: Some(r#"instance_name="nuc""#.into()),
+                insecure_tls: true,
+                host_header: Some("prometheus.home.lab".into()),
+            },
+        );
+        assert_eq!(c.selector(), r#"instance_name="nuc""#);
     }
 
     #[tokio::test]

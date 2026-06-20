@@ -174,6 +174,19 @@ pub struct TargetConfig {
     pub key: Option<String>,
     /// Override the poll interval in seconds (each kind has a built-in default).
     pub interval_secs: Option<u64>,
+    /// For `prometheus` kind: HTTP `Host` header to send. Lets you reach an
+    /// ingress by IP without DNS (e.g. over Tailscale); the ingress routes by
+    /// Host. Defaults to the endpoint's own host.
+    #[serde(default)]
+    pub host_header: Option<String>,
+    /// For `prometheus` kind: accept invalid/self-signed TLS certs. Intended for
+    /// internal endpoints reached over an already-encrypted tunnel (Tailscale).
+    #[serde(default)]
+    pub insecure_tls: bool,
+    /// For `prometheus` kind: raw PromQL label matcher selecting this target's
+    /// series, e.g. `instance_name="nuc"`. Defaults to `instance=~"<name>.*"`.
+    #[serde(default)]
+    pub instance_matcher: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
