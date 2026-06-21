@@ -502,15 +502,28 @@ impl EguiSkin {
         let pct = |key: &str| ms.and_then(|m| m.get(&key.into()));
 
         ui.columns(2, |cols| {
+            // CPU — per-core heatmap (the signature view); aggregate heatgraph
+            // when a host reports no per-core data (e.g. remote Prometheus).
             metric_box(&mut cols[0], "CPU", |ui| {
-                spark_with_value(
-                    ui,
-                    "spark_cpu",
-                    pct("cpu.percent"),
-                    &model.history_for(machine, "cpu.percent", 60),
-                    ACCENT,
-                );
+                value_row(ui, pct("cpu.percent"));
+                let cores = core_histories(model, machine);
+                if cores.len() > 1 {
+                    heatmap(ui, &cores, 100.0);
+                    ui.label(
+                        RichText::new(format!("{} cores · heatmap", cores.len()))
+                            .small()
+                            .color(Color32::GRAY),
+                    );
+                } else {
+                    heatgraph(
+                        ui,
+                        &model.history_for(machine, "cpu.percent", 60),
+                        100.0,
+                        46.0,
+                    );
+                }
             });
+            // NET — butterfly (rx up / tx down).
             metric_box(&mut cols[0], "NET", |ui| {
                 let rx = first_history(model, machine, &["net.rx_bytes_sec", "net.rx_bytes"]);
                 let tx = first_history(model, machine, &["net.tx_bytes_sec", "net.tx_bytes"]);
@@ -525,6 +538,7 @@ impl EguiSkin {
                     );
                 }
             });
+            // MEM — sparkline; disk — heat meter.
             metric_box(&mut cols[1], "MEM", |ui| {
                 spark_with_value(
                     ui,
@@ -533,24 +547,22 @@ impl EguiSkin {
                     &model.history_for(machine, "memory.percent", 60),
                     USER_CYAN,
                 );
-                ui.add_space(2.0);
+                ui.add_space(4.0);
                 ui.label(RichText::new("disk").small().color(Color32::GRAY));
-                spark_with_value(
-                    ui,
-                    "spark_disk",
-                    pct("disk.used_pct"),
-                    &model.history_for(machine, "disk.used_pct", 60),
-                    ACCENT,
-                );
+                value_row(ui, pct("disk.used_pct"));
+                heatmeter(ui, pct("disk.used_pct"));
             });
+            // GPU — heat graph (DCGM util), when present.
             metric_box(&mut cols[1], "GPU", |ui| match pct("gpu.util_pct") {
-                Some(_) => spark_with_value(
-                    ui,
-                    "spark_gpu",
-                    pct("gpu.util_pct"),
-                    &model.history_for(machine, "gpu.util_pct", 60),
-                    ACCENT,
-                ),
+                Some(v) => {
+                    value_row(ui, Some(v));
+                    heatgraph(
+                        ui,
+                        &model.history_for(machine, "gpu.util_pct", 60),
+                        100.0,
+                        46.0,
+                    );
+                }
                 None => {
                     ui.label(RichText::new("no GPU on this host").color(Color32::GRAY));
                 }
@@ -726,15 +738,8 @@ fn stub_box(ui: &mut egui::Ui, title: &str, body: &str) {
     });
 }
 
-/// Current value (latest sample) shown small + right-aligned, above a filled
-/// sparkline — the change-over-time view we prefer over a snapshot gauge.
-fn spark_with_value(
-    ui: &mut egui::Ui,
-    id: &str,
-    current: Option<f64>,
-    history: &[f64],
-    color: Color32,
-) {
+/// The latest value, small + right-aligned, colored by severity.
+fn value_row(ui: &mut egui::Ui, current: Option<f64>) {
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         let (text, col) = match current {
             Some(v) => (format!("{v:.0}%"), pct_color(v)),
@@ -742,6 +747,17 @@ fn spark_with_value(
         };
         ui.label(RichText::new(text).strong().color(col));
     });
+}
+
+/// Current value above a filled sparkline (change-over-time).
+fn spark_with_value(
+    ui: &mut egui::Ui,
+    id: &str,
+    current: Option<f64>,
+    history: &[f64],
+    color: Color32,
+) {
+    value_row(ui, current);
     sparkline(ui, id, history, color, Some(100.0));
 }
 
@@ -827,6 +843,131 @@ fn first_history(model: &PresenceModel, machine: &str, keys: &[&str]) -> Vec<f64
         }
     }
     Vec::new()
+}
+
+/// Per-core CPU histories for `machine` (the local collector emits
+/// `cpu.core.N.percent`), sorted by core index — the rows of the CPU heatmap.
+fn core_histories(model: &PresenceModel, machine: &str) -> Vec<Vec<f64>> {
+    let Some(target) = model.metrics_history.get(machine) else {
+        return Vec::new();
+    };
+    let mut cores: Vec<(usize, Vec<f64>)> = target
+        .iter()
+        .filter_map(|(k, dq)| {
+            let n = k
+                .strip_prefix("cpu.core.")?
+                .strip_suffix(".percent")?
+                .parse::<usize>()
+                .ok()?;
+            Some((n, dq.iter().copied().collect()))
+        })
+        .collect();
+    cores.sort_by_key(|(n, _)| *n);
+    cores.into_iter().map(|(_, v)| v).collect()
+}
+
+/// Value (0..=1) → heat color: green → yellow → red (the monty-tui gradient).
+fn heat_color(frac: f64) -> Color32 {
+    let f = frac.clamp(0.0, 1.0) as f32;
+    let lerp = |a: u8, b: u8, t: f32| (a as f32 + (b as f32 - a as f32) * t) as u8;
+    let (lo, mid, hi) = (
+        (0x5a_u8, 0xb0, 0x6a),
+        (0xd7_u8, 0xbf, 0x5a),
+        (0xd9_u8, 0x4f, 0x4f),
+    );
+    if f < 0.5 {
+        let t = f / 0.5;
+        Color32::from_rgb(
+            lerp(lo.0, mid.0, t),
+            lerp(lo.1, mid.1, t),
+            lerp(lo.2, mid.2, t),
+        )
+    } else {
+        let t = (f - 0.5) / 0.5;
+        Color32::from_rgb(
+            lerp(mid.0, hi.0, t),
+            lerp(mid.1, hi.1, t),
+            lerp(mid.2, hi.2, t),
+        )
+    }
+}
+
+/// btop-style heat graph: one heat-colored bar per sample (newest right),
+/// height = magnitude, color = value (green low → red high).
+fn heatgraph(ui: &mut egui::Ui, values: &[f64], max: f64, height: f32) {
+    if values.is_empty() {
+        ui.label(RichText::new("waiting…").small().color(Color32::GRAY));
+        return;
+    }
+    let (resp, painter) = ui.allocate_painter(
+        egui::vec2(ui.available_width(), height),
+        egui::Sense::hover(),
+    );
+    let rect = resp.rect;
+    let cw = rect.width() / values.len() as f32;
+    for (i, &v) in values.iter().enumerate() {
+        let frac = (v / max).clamp(0.0, 1.0);
+        let h = frac as f32 * rect.height();
+        let x = rect.left() + i as f32 * cw;
+        let bar = egui::Rect::from_min_max(
+            egui::pos2(x, rect.bottom() - h),
+            egui::pos2(x + cw.max(1.0), rect.bottom()),
+        );
+        painter.rect_filled(bar, egui::Rounding::ZERO, heat_color(frac));
+    }
+}
+
+/// A 2D heatmap: one row per series (e.g. a CPU core), columns = time (newest
+/// right), cell color = value. The signature per-core CPU view.
+fn heatmap(ui: &mut egui::Ui, rows: &[Vec<f64>], max: f64) {
+    if rows.is_empty() {
+        ui.label(RichText::new("waiting…").small().color(Color32::GRAY));
+        return;
+    }
+    let row_h = 6.0_f32;
+    let (resp, painter) = ui.allocate_painter(
+        egui::vec2(ui.available_width(), rows.len() as f32 * row_h),
+        egui::Sense::hover(),
+    );
+    let rect = resp.rect;
+    let cols = rows.iter().map(Vec::len).max().unwrap_or(0).max(1);
+    let cw = rect.width() / cols as f32;
+    for (r, row) in rows.iter().enumerate() {
+        let y = rect.top() + r as f32 * row_h;
+        let pad = cols - row.len(); // right-align: newest cells on the right
+        for (c, &v) in row.iter().enumerate() {
+            let frac = (v / max).clamp(0.0, 1.0);
+            let x = rect.left() + (pad + c) as f32 * cw;
+            let cell =
+                egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(cw.max(1.0), row_h - 1.0));
+            painter.rect_filled(cell, egui::Rounding::ZERO, heat_color(frac));
+        }
+    }
+}
+
+/// btop-style heat meter: a single bar filled to `percent`, each filled segment
+/// graded green → red by its position.
+fn heatmeter(ui: &mut egui::Ui, percent: Option<f64>) {
+    let pct = percent.unwrap_or(0.0);
+    let (resp, painter) =
+        ui.allocate_painter(egui::vec2(ui.available_width(), 14.0), egui::Sense::hover());
+    let rect = resp.rect;
+    let segs = 40usize;
+    let sw = rect.width() / segs as f32;
+    let filled = (segs as f64 * (pct / 100.0).clamp(0.0, 1.0)).round() as usize;
+    for s in 0..segs {
+        let x = rect.left() + s as f32 * sw;
+        let seg = egui::Rect::from_min_size(
+            egui::pos2(x, rect.top()),
+            egui::vec2((sw - 1.0).max(1.0), rect.height()),
+        );
+        let color = if s < filled {
+            heat_color(s as f64 / segs as f64)
+        } else {
+            Color32::from_gray(48)
+        };
+        painter.rect_filled(seg, egui::Rounding::same(1.0), color);
+    }
 }
 
 /// A voice level-meter. While listening it renders the live mic RMS `levels`
