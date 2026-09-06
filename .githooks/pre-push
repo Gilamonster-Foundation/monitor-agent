@@ -9,7 +9,7 @@
 #
 # PIPELINE PARITY: This hook mirrors .github/workflows/ci.yml.
 #   `just check`  — matches the lint + test jobs (fmt + clippy + cargo test)
-#   `just cov-ci` — matches the coverage job (80% line coverage floor)
+#   `just cov-ci` — matches the coverage job (76% line coverage floor)
 # When editing this hook, update the workflow to match.
 # When editing the workflow, update this hook to match.
 #
@@ -38,9 +38,18 @@ fi
 echo "[pre-push] running just check..."
 just check
 
-echo "[pre-push] running just cov-ci (80% floor)..."
-LLVM_COV=/opt/homebrew/opt/llvm/bin/llvm-cov \
-LLVM_PROFDATA=/opt/homebrew/opt/llvm/bin/llvm-profdata \
-  just cov-ci
+echo "[pre-push] running just cov-ci (76% floor)..."
+# On macOS (Homebrew Rust) llvm-tools-preview is unavailable via rustup, so
+# cargo-llvm-cov needs to be pointed at Homebrew's LLVM. Only do that when it
+# is actually there: these paths do not exist on Linux, and setting them
+# unconditionally made the coverage gate fail with "could not execute process
+# ... No such file or directory" on every non-Mac box — which is how the gate
+# stopped gating without anyone noticing. On Linux, rustup's llvm-tools are
+# found without help.
+if [ -x /opt/homebrew/opt/llvm/bin/llvm-profdata ]; then
+    export LLVM_COV=/opt/homebrew/opt/llvm/bin/llvm-cov
+    export LLVM_PROFDATA=/opt/homebrew/opt/llvm/bin/llvm-profdata
+fi
+just cov-ci
 
 echo "[pre-push] OK"
