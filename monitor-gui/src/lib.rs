@@ -774,7 +774,7 @@ fn sparkline(ui: &mut egui::Ui, id: &str, values: &[f64], color: Color32, fixed_
         .enumerate()
         .map(|(i, &v)| [i as f64, v])
         .collect();
-    let line = Line::new(pts).color(color).width(1.5).fill(0.0);
+    let line = Line::new(pts).color(color).width(1.5_f32).fill(0.0_f32);
     let xmax = (values.len() as f64 - 1.0).max(1.0);
     let (ymin, ymax) = match fixed_max {
         Some(m) => (0.0, m),
@@ -815,7 +815,7 @@ fn butterfly_net(ui: &mut egui::Ui, id: &str, rx: &[f64], tx: &[f64]) {
             .enumerate()
             .map(|(i, &v)| [i as f64, sign * v])
             .collect();
-        Line::new(pts).color(color).width(1.2).fill(0.0)
+        Line::new(pts).color(color).width(1.2_f32).fill(0.0_f32)
     };
     let rx_line = wing(rx, 1.0, ACCENT);
     let tx_line = wing(tx, -1.0, USER_CYAN);
