@@ -25,6 +25,54 @@ pub struct Config {
     pub notify: NotifyConfig,
     #[serde(default)]
     pub tui: TuiConfig,
+    #[serde(default)]
+    pub journal: JournalConfig,
+}
+
+/// Where the metric journal is written, and whether it is.
+///
+/// Recording is on by default and deliberately so: a forecast needs weeks of
+/// history, and history not captured today cannot be recovered later.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JournalConfig {
+    #[serde(default = "default_journal_enabled")]
+    pub enabled: bool,
+    /// Explicit journal directory. Defaults to
+    /// `$XDG_DATA_HOME/monitor-agent/journal`, else `~/.local/share/...`.
+    #[serde(default)]
+    pub dir: Option<PathBuf>,
+}
+
+fn default_journal_enabled() -> bool {
+    true
+}
+
+impl Default for JournalConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_journal_enabled(),
+            dir: None,
+        }
+    }
+}
+
+impl JournalConfig {
+    /// The directory to record into, resolving the default if unset.
+    ///
+    /// `None` only when the process has neither `XDG_DATA_HOME` nor `HOME`, in
+    /// which case there is nowhere sensible to write and the caller should skip
+    /// journalling rather than invent a path.
+    pub fn resolved_dir(&self) -> Option<PathBuf> {
+        if let Some(dir) = &self.dir {
+            return Some(dir.clone());
+        }
+        if let Ok(data) = std::env::var("XDG_DATA_HOME") {
+            if !data.is_empty() {
+                return Some(PathBuf::from(data).join("monitor-agent/journal"));
+            }
+        }
+        dirs_home().map(|h| h.join(".local/share/monitor-agent/journal"))
+    }
 }
 
 /// TUI-specific settings.

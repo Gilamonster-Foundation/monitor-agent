@@ -10,10 +10,33 @@ use monitor_core::{
     metrics::Collector,
     Config as MonitorConfig,
 };
+use monitor_journal::Journal;
 use monitor_presence::DataEvent;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
+
+/// Open the metric journal, or `None` if recording is off or unavailable.
+///
+/// A journal that cannot be opened is reported once and then skipped: Monty
+/// alerting without history beats Monty not starting.
+fn open_journal(cfg: &MonitorConfig) -> Option<Journal> {
+    if !cfg.journal.enabled {
+        tracing::debug!("journal: disabled by config");
+        return None;
+    }
+    let dir = cfg.journal.resolved_dir()?;
+    match Journal::open(&dir) {
+        Ok(j) => {
+            tracing::info!("journal: recording to {}", dir.display());
+            Some(j)
+        }
+        Err(e) => {
+            tracing::warn!("journal: disabled — cannot open {}: {e}", dir.display());
+            None
+        }
+    }
+}
 
 /// Build the list of collectors from config.
 pub async fn build_collectors(cfg: &MonitorConfig) -> anyhow::Result<Vec<Arc<dyn Collector>>> {
@@ -109,6 +132,7 @@ pub async fn spawn_collectors(cfg: Config, tx: mpsc::Sender<DataEvent>) -> anyho
     let collectors = build_collectors(&cfg).await?;
     let rules = cfg.alert_rules();
     let dispatchers = build_dispatchers(&cfg).await;
+    let journal = open_journal(&cfg);
 
     // Tick task — sends periodic clock events.
     let tick_tx = tx.clone();
@@ -127,6 +151,7 @@ pub async fn spawn_collectors(cfg: Config, tx: mpsc::Sender<DataEvent>) -> anyho
 
     // Collector / alert-engine task.
     tokio::spawn(async move {
+        let mut journal = journal;
         let mut engine = AlertEngine::new(rules);
         let poll_secs = 2u64;
         let mut interval = tokio::time::interval(Duration::from_secs(poll_secs));
@@ -137,6 +162,21 @@ pub async fn spawn_collectors(cfg: Config, tx: mpsc::Sender<DataEvent>) -> anyho
             for collector in &collectors {
                 match collector.collect().await {
                     Ok(metrics) => {
+                        // Record before anything else consumes it: the journal is
+                        // the only copy that outlives the process.
+                        //
+                        // ponytail: a sync write on the async worker. One append
+                        // per collector per poll is sub-millisecond; move it to
+                        // spawn_blocking only if the poll interval ever gets
+                        // short enough for it to matter.
+                        if let Some(j) = journal.as_mut() {
+                            if let Err(e) = j.append(&metrics) {
+                                // A bad sample costs that sample. Recording is
+                                // not worth taking the daemon down for.
+                                tracing::warn!("journal append failed: {e}");
+                            }
+                        }
+
                         // Send raw metrics to TUI.
                         let _ = tx.send(DataEvent::MetricsUpdate(metrics.clone())).await;
 
@@ -201,7 +241,9 @@ pub async fn run_daemon(cfg: Config) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use monitor_core::config::{Config, DaemonConfig, NotifyConfig, TargetConfig, TargetKind};
+    use monitor_core::config::{
+        Config, DaemonConfig, JournalConfig, NotifyConfig, TargetConfig, TargetKind,
+    };
 
     fn local_only_config() -> Config {
         Config {
@@ -215,6 +257,12 @@ mod tests {
             rules: vec![],
             notify: NotifyConfig::default(),
             tui: monitor_core::config::TuiConfig::default(),
+            // Off by default in tests: the real default is on, and a test must
+            // never record into the developer's own journal.
+            journal: JournalConfig {
+                enabled: false,
+                dir: None,
+            },
         }
     }
 
@@ -327,5 +375,49 @@ mod tests {
         // DaemonConnected is sent synchronously before the async poll task starts.
         let event = rx.recv().await.unwrap();
         assert!(matches!(event, DataEvent::DaemonConnected));
+    }
+
+    /// The wiring test: a Journal that is never called records nothing, so
+    /// assert the daemon actually writes a verifiable chain to disk.
+    #[tokio::test]
+    async fn spawn_collectors_records_metrics_to_the_journal() {
+        let dir = tempfile::tempdir().unwrap();
+        let (tx, mut rx) = mpsc::channel::<DataEvent>(64);
+        let mut cfg = local_only_config();
+        cfg.journal = JournalConfig {
+            enabled: true,
+            dir: Some(dir.path().to_path_buf()),
+        };
+        spawn_collectors(cfg, tx).await.unwrap();
+
+        // Wait for the first real metric to come through the pipeline.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        loop {
+            let remaining = deadline - tokio::time::Instant::now();
+            match tokio::time::timeout(remaining, rx.recv()).await {
+                Ok(Some(DataEvent::MetricsUpdate(_))) => break,
+                Ok(Some(_)) => continue,
+                Ok(None) => panic!("collector channel closed before any metrics"),
+                Err(_) => panic!("no MetricsUpdate within 15s"),
+            }
+        }
+
+        // The append happens before the send, so by now it is on disk.
+        let journal = Journal::open(dir.path()).unwrap();
+        assert!(journal.head().is_some(), "journal recorded no snapshot");
+        assert!(journal.verify().unwrap() >= 1, "journal did not verify");
+    }
+
+    /// Recording off means nothing is written — the switch is real.
+    #[tokio::test]
+    async fn journal_disabled_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = local_only_config();
+        cfg.journal = JournalConfig {
+            enabled: false,
+            dir: Some(dir.path().to_path_buf()),
+        };
+        assert!(open_journal(&cfg).is_none());
+        assert!(!dir.path().join("journal.log").exists());
     }
 }

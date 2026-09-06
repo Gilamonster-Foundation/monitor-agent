@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "monitor-core",
     "monitor-collect",
+    "monitor-journal",
     "monitor-alert",
     "monitor-presence",
     "monitor-tui",
@@ -15,7 +16,7 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.85"  # floor set by content-addressable 0.1.2
 license = "Apache-2.0"
 repository = "https://github.com/hartsock/monitor-agent"
 homepage = "https://github.com/hartsock/monitor-agent"
@@ -34,6 +35,12 @@ uuid = { version = "1", features = ["v4", "serde"] }
 toml = "0.8"
 regex = "1"
 async-trait = "0.1"
+
+# Content addressing — identity derived from bytes, not assigned.
+# `unstable-merkle` gates MerkleNode; its serialized layout is NON-FROZEN
+# until the crate ships conformance vectors, so the journal's on-disk bytes
+# may change in a later 0.1.x. One migration, not a compatibility arm.
+content-addressable = { version = "0.1.2", features = ["unstable-merkle"] }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -62,6 +69,7 @@ crossterm = { version = "0.28", features = ["event-stream"] }
 # Internal crates
 monitor-core     = { path = "monitor-core",     version = "=0.1.0" }
 monitor-collect  = { path = "monitor-collect",  version = "=0.1.0" }
+monitor-journal  = { path = "monitor-journal",  version = "=0.1.0" }
 monitor-alert    = { path = "monitor-alert",    version = "=0.1.0" }
 monitor-presence = { path = "monitor-presence", version = "=0.1.0" }
 monitor-tui      = { path = "monitor-tui",      version = "=0.1.0" }

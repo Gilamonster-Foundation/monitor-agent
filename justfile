@@ -9,7 +9,7 @@
 #   just              — list available recipes
 #   just check        — full local gate (fmt + clippy + test)
 #   just cov          — HTML coverage report (local review)
-#   just cov-ci       — coverage with 76% floor, lcov output (CI mode)
+#   just cov-ci       — coverage with 78% floor, lcov output (CI mode)
 #   just install      — build release binary to ~/bin
 #   just install-hooks — wire .githooks/ as the repo's hooks path
 
@@ -68,18 +68,18 @@ cov:
 #   export LLVM_COV=/opt/homebrew/opt/llvm/bin/llvm-cov
 #   export LLVM_PROFDATA=/opt/homebrew/opt/llvm/bin/llvm-profdata
 #
-# The floor RATCHETS UP — never down. Current baseline: 76%.
+# The floor RATCHETS UP — never down. Current baseline: 78%.
 #
-# Corrected from 80 on 2026-09-06. 80 was never enforced on this branch:
-# `just cov-ci` could not complete on Linux at all (see .githooks/pre-push),
-# so the number drifted without anyone measuring it. Measured now, main is at
-# 76.58% line coverage — 80 was an aspiration wearing a gate's clothes.
+# 76 -> 78, raised by this branch. See this recipe's history for why 80 was
+# never actually enforced; main measures 76.58%. `monitor-journal` lands at
+# 91.79% line coverage and carries the workspace to 78.06%, so 78 is a floor
+# that holds the moment it is set.
 #
-# 76 is the first number that is actually TRUE, which makes it the first one
-# worth enforcing. Raise it as coverage improves; the largest single gap is
-# monitor-gui/src/lib.rs at 58%.
+# That is the rule this encodes: a new crate should RAISE this number, not
+# coast underneath it. Raise it further as coverage improves; the largest
+# single gap is monitor-gui/src/lib.rs at 58%.
 cov-ci:
-    cargo llvm-cov --workspace --lcov --output-path lcov.info --fail-under-lines 76
+    cargo llvm-cov --workspace --lcov --output-path lcov.info --fail-under-lines 78
 
 # --- Hook installation ---
 
