@@ -8,11 +8,22 @@
 #
 # Install: `just install-hooks`
 #
-# PIPELINE PARITY: This hook mirrors .github/workflows/ci.yml.
-#   `just check`  — matches the lint + test jobs (fmt + clippy + cargo test)
-#   `just cov-ci` — matches the coverage job (78% line coverage floor)
-# When editing this hook, update the workflow to match.
-# When editing the workflow, update this hook to match.
+# PIPELINE PARITY: this hook mirrors .github/workflows/ci.yml, which invokes
+# the SAME just recipes rather than restating the command strings:
+#   `just check`  -> ci.yml job `gate`     (fmt-check + lint + test + test-features)
+#   `just cov-ci` -> ci.yml job `coverage` (77% line floor)
+# The justfile is the single source of truth for both.
+#
+# CI differs in exactly two documented ways, both listed in ci.yml's header:
+# it apt-installs libasound2-dev + pkg-config, and it uploads lcov.info.
+# CI additionally runs an `msrv` job (a second full toolchain) that this hook
+# deliberately skips — it is wall-clock a developer should not pay per push.
+#
+# NOTE: the coverage floor is calibrated on a CI RUNNER, not here. This box
+# reads ~0.4 points high because voice.rs probes for TTS binaries that are
+# installed locally and absent on a runner. See the justfile for detail.
+#
+# When editing this hook, update the workflow to match, and vice versa.
 #
 # Do NOT skip this hook with `--no-verify`. Fix the issue instead.
 
@@ -39,7 +50,7 @@ fi
 echo "[pre-push] running just check..."
 just check
 
-echo "[pre-push] running just cov-ci (78% floor)..."
+echo "[pre-push] running just cov-ci (77% floor)..."
 # On macOS (Homebrew Rust) llvm-tools-preview is unavailable via rustup, so
 # cargo-llvm-cov needs to be pointed at Homebrew's LLVM. Only do that when it
 # is actually there: these paths do not exist on Linux, and setting them

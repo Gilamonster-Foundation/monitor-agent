@@ -4,7 +4,7 @@ name: CI
 # runs `just check` + `just cov-ci`.
 #
 # Every step below invokes the SAME just recipe the hook does. The justfile is
-# the single source of truth for the command strings and for the 78% coverage
+# the single source of truth for the command strings and for the coverage
 # floor — CI never re-types them. Parity therefore holds by construction, not
 # by comment, and editing a recipe updates both gates at once.
 #
@@ -123,7 +123,7 @@ jobs:
         run: cargo check --workspace --all-targets --locked
 
   coverage:
-    name: coverage (78% line floor)
+    name: coverage (77% line floor)
     runs-on: ${{ vars.GMF_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 45
     steps:
