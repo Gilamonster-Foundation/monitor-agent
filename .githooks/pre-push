@@ -9,7 +9,7 @@
 #
 # PIPELINE PARITY: This hook mirrors .github/workflows/ci.yml.
 #   `just check`  — matches the lint + test jobs (fmt + clippy + cargo test)
-#   `just cov-ci` — matches the coverage job (76% line coverage floor)
+#   `just cov-ci` — matches the coverage job (78% line coverage floor)
 # When editing this hook, update the workflow to match.
 # When editing the workflow, update this hook to match.
 #
@@ -38,7 +38,7 @@ fi
 echo "[pre-push] running just check..."
 just check
 
-echo "[pre-push] running just cov-ci (76% floor)..."
+echo "[pre-push] running just cov-ci (78% floor)..."
 # On macOS (Homebrew Rust) llvm-tools-preview is unavailable via rustup, so
 # cargo-llvm-cov needs to be pointed at Homebrew's LLVM. Only do that when it
 # is actually there: these paths do not exist on Linux, and setting them
