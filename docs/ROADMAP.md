@@ -9,6 +9,7 @@
 > Design detail lives in:
 > [`docs/design/caster-station.md`](design/caster-station.md) ·
 > [`docs/design/inhabit-both-surfaces.md`](design/inhabit-both-surfaces.md) ·
+> [`docs/design/predictive-monty.md`](design/predictive-monty.md) ·
 > [`docs/decisions/0001-station-toolchain.md`](decisions/0001-station-toolchain.md)
 
 **Status:** ✅ done / merged · 🔄 in review (open PR) · ⬜ planned · ⏸ on hold
@@ -72,6 +73,28 @@ The seam → fan-out → shared-handle → skins progression. See
 | Swarm status — generic `monitor-swarm` model + `SwarmJsonCollector`; Swarm / Board tabs | ⏸ on hold — **swarm architecture being reworked** |
 | Authenticated **mesh** transport (`agent-mesh`: mDNS discovery + signed QUIC envelopes) | ⬜ |
 | "Breathing pool" farm health (`newt-scheduler` `PoolSource` + prober) | ⬜ |
+
+## 5b. Predictive Monty — forecasting, and the harness around it
+
+Monty alerts on the *present* and promises the *future*:
+`Condition::evaluate(&self, value: f64)` takes a single scalar, and metric
+history is 60 samples in RAM. This track closes that gap, or proves it is not
+worth closing.
+
+**Design record:** [`docs/design/predictive-monty.md`](design/predictive-monty.md).
+
+| Epic | What | Status |
+|---|---|---|
+| [#23](https://github.com/Gilamonster-Foundation/monitor-agent/issues/23) | **Foundations** — persistence, incident labels, record types, Python host, CI | 🔄 F1 in review ([#22](https://github.com/Gilamonster-Foundation/monitor-agent/pull/22)) |
+| [#24](https://github.com/Gilamonster-Foundation/monitor-agent/issues/24) | **The experiment** — does TimesFM beat a straight line? | ⬜ the gate |
+| [#25](https://github.com/Gilamonster-Foundation/monitor-agent/issues/25) | **Forecasting** — claims, scoring, `ForecastCrosses` | ⬜ conditional |
+| [#26](https://github.com/Gilamonster-Foundation/monitor-agent/issues/26) | **The agent** — explain, propose, outer loop, newtui | ⬜ conditional |
+| [#27](https://github.com/Gilamonster-Foundation/monitor-agent/issues/27) | **The vision** — Monty acts | ⬜ conditional |
+
+> Epics #25–#27 are **conditional on #24 by design**. If TimesFM does not beat
+> linear + seasonal-naive by ≥2× lead time at a fixed false-alarm budget, they
+> close unopened. #23's F1 is the only time-gated item — weekly seasonality
+> needs ≥3 weeks of wall clock, so recording starts before the rest is settled.
 
 ## 6. Repo & infrastructure
 
