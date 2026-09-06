@@ -2,8 +2,9 @@
 #
 # Pre-push hook for monitor-agent
 #
-# Runs the same lint + test + coverage gates that CI runs, locally,
-# before any push reaches origin. If this passes, CI should pass too.
+# Runs the same lint + test + coverage gates that CI runs, locally, before any
+# push reaches origin. If this passes, CI should pass too — literally: both
+# invoke the same just recipes.
 #
 # Install: `just install-hooks`
 #
