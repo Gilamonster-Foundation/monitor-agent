@@ -28,6 +28,7 @@ monitor-core.workspace = true
 monitor-collect.workspace = true
 monitor-alert.workspace = true
 monitor-presence.workspace = true
+monitor-journal.workspace = true
 monitor-tui.workspace = true
 monitor-gui = { workspace = true, optional = true }
 anyhow.workspace = true
