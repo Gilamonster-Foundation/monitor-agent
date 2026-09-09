@@ -174,55 +174,8 @@ webhook       = ""              # set to a URL to enable
 
 ## Full config example
 
-```toml
-[daemon]
-socket = ""    # default: $XDG_RUNTIME_DIR/monitor-agent.sock
-
-[[targets]]
-name = "local"
-kind = "local"
-
-[[targets]]
-name = "gnuc"
-kind = "prometheus"
-endpoint = "http://192.168.0.104:9090"
-
-[[targets]]
-name = "nuc"
-kind = "ssh"
-host = "192.168.0.104"
-user = "hartsock"
-key  = "~/.ssh/id_ed25519"
-
-[nats]
-servers  = ["nats://192.168.0.104:4222"]
-subjects = ["swarm.heartbeat", "monitor.>"]
-
-[[rules]]
-name      = "high-cpu"
-target    = "*"
-metric    = "cpu.percent"
-condition = { gt = 85.0 }
-severity  = "warn"
-message   = "{target}: CPU at {value:.0}%"
-
-[[rules]]
-name      = "critical-disk"
-target    = "*"
-metric    = "disk.used_pct"
-condition = { gt = 90.0 }
-severity  = "critical"
-
-[notify]
-terminal_bell = true
-voice         = true
-voice_engine  = "auto"
-nats_subject  = "monitor.alerts"
-```
-
-Config is searched in order: `MONITOR_CONFIG` env → `./monitor-agent.toml`
-→ `~/.config/monitor-agent/config.toml` → `/etc/monitor-agent/config.toml`
-→ built-in defaults.
+See [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) for a complete
+`monitor-agent.toml` combining targets, NATS, rules, and notify in one file.
 
 ---
 
@@ -262,8 +215,7 @@ monitor-agent/
 
 ## Roadmap
 
-Next: Phase 11 — IPC socket daemon/TUI split (daemon runs as a background
-service; TUI attaches on demand). See [`docs/ROADMAP.md`](docs/ROADMAP.md).
+See [`docs/ROADMAP.md`](docs/ROADMAP.md) for current priorities.
 
 ---
 
