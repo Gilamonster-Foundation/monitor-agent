@@ -16,7 +16,9 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.85"  # floor set by content-addressable 0.1.2
+rust-version = "1.88"  # real floor: darling 0.23 in the lockfile.
+#                        Verified in a clean container — 1.85 does NOT build.
+#                        Enforced by the `msrv` job in .github/workflows/ci.yml.
 license = "Apache-2.0"
 repository = "https://github.com/hartsock/monitor-agent"
 homepage = "https://github.com/hartsock/monitor-agent"

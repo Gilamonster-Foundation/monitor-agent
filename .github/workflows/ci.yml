@@ -1,0 +1,166 @@
+name: CI
+
+# PIPELINE PARITY: this workflow is mirrored by `.githooks/pre-push`, which
+# runs `just check` + `just cov-ci`.
+#
+# Every step below invokes the SAME just recipe the hook does. The justfile is
+# the single source of truth for the command strings and for the coverage
+# floor — CI never re-types them. Parity therefore holds by construction, not
+# by comment, and editing a recipe updates both gates at once.
+#
+# PARITY EXCEPTIONS (CI-only, deliberate):
+#   * apt-installs libasound2-dev + pkg-config — runner provisioning, not a
+#     change to what is tested.
+#   * uploads lcov.info as an artifact.
+# There are no local-only steps. The hook's macOS LLVM_COV/LLVM_PROFDATA block
+# is inert on Linux and must NOT be ported here.
+#
+# When editing this file, update .githooks/pre-push and the justfile to match.
+
+on:
+  push:
+    branches: ["main"]
+  # Deliberately NO `branches:` filter. With `branches: [main]`, a stacked PR
+  # whose base is another feature branch matches neither trigger, so nothing
+  # runs — and GitHub still reports mergeStateStatus=CLEAN. "No checks ran"
+  # must never render as green. Do not re-add the filter.
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Never cancel a run on main; superseding a branch run is fine.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  gate:
+    name: fmt + clippy + test
+    # Self-hosted escape hatch, falling back to GitHub's runners when the org
+    # variable is unset (the house pattern from newt-agent).
+    runs-on: ${{ vars.GMF_LINUX_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+
+      # PARITY EXCEPTION: runner provisioning.
+      #
+      # This is the complete list, established two independent ways rather than
+      # assumed: `cargo tree -i pkg-config` has exactly two consumers
+      # (alsa-sys, wayland-sys), and a clean rust:1.88-bookworm container runs
+      # the whole gate green with only this installed.
+      #
+      # alsa-sys is a hard blocker — its build.rs probes pkg-config and panics.
+      # Chain: monitor-voice -> cpal -> alsa -> alsa-sys, and both monitor-voice
+      # and monitor-gui are unconditional workspace members, so no feature flag
+      # dodges it. This is what killed the first CI run (34062498409).
+      #
+      # No X11/GTK/GL/xkbcommon packages are needed: wayland-sys resolves with
+      # `dlopen`, x11-dl maps a pkg-config miss to None, and glutin/glow load
+      # GL at runtime. eframe's reputation says otherwise; this dependency tree
+      # does not. No display, no audio device, no Xvfb — the gui tests drive
+      # egui headlessly and the only device-touching test is #[ignore]d.
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: gate
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+
+      - name: just fmt-check
+        run: just fmt-check
+      # `always()` between sibling gates so one failure never masks another —
+      # you get every failure in one run instead of a round trip per gate.
+      - name: just lint
+        if: always()
+        run: just lint
+      - name: just test
+        if: always()
+        run: just test
+      - name: just test-features
+        if: always()
+        run: just test-features
+
+  msrv:
+    # Pins the declared floor so a transitive dependency cannot raise the real
+    # MSRV silently. It already did once, undetected: the workspace declared
+    # 1.85 while the lockfile needed 1.88 (darling 0.23). Nothing caught it
+    # because nothing had ever built at the floor.
+    name: MSRV 1.88
+    runs-on: ${{ vars.GMF_LINUX_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    env:
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@v4
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv
+      - name: cargo check at the declared floor
+        run: cargo check --workspace --all-targets --locked
+
+  coverage:
+    name: coverage (77% line floor)
+    runs-on: ${{ vars.GMF_LINUX_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # cargo-llvm-cov hard-requires this component.
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Coverage is an instrumented build in target/llvm-cov-target. Keep it
+          # off the gate job's cache or the two thrash each other every run.
+          key: coverage
+      - uses: taiki-e/install-action@v2
+        with:
+          # cargo-llvm-cov is PINNED on purpose. newt-agent #100 found 0.8.5
+          # silently exiting 0 when --fail-under-lines is combined with
+          # --lcov --output-path — the gate stopped gating and nobody noticed.
+          # 0.8.7 was verified to exit 1 on an unmet floor. If you ever unpin,
+          # replace --fail-under-lines with a shell parse of the TOTAL row.
+          tool: just,cargo-llvm-cov@0.8.7
+
+      # Human-readable number in the log, so a near-floor commit is visible
+      # BEFORE it goes red. The floor itself is enforced by the next step.
+      - name: Coverage summary
+        run: cargo llvm-cov --workspace --locked --summary-only
+
+      - name: just cov-ci
+        run: just cov-ci
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lcov
+          path: lcov.info
+          if-no-files-found: warn
